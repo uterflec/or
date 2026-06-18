@@ -57,11 +57,11 @@ func (a *Adapter) Stream(
 	}
 
 	compat := resolveCompat(model)
-	messages, err := convertMessages(input, model)
+	messages, err := convertMessages(input, model, compat)
 	if err != nil {
 		return nil, err
 	}
-	tools, err := convertTools(input.Tools)
+	tools, err := convertTools(input.Tools, compat)
 	if err != nil {
 		return nil, err
 	}

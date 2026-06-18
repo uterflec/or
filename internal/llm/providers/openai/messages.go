@@ -11,11 +11,19 @@ import (
 	"github.com/openai/openai-go/v3/shared"
 )
 
-func convertMessages(input llm.Context, model llm.Model) ([]oai.ChatCompletionMessageParamUnion, error) {
+func convertMessages(
+	input llm.Context,
+	model llm.Model,
+	compat resolvedCompat,
+) ([]oai.ChatCompletionMessageParamUnion, error) {
 	transformed := llm.TransformMessages(input.Messages, model)
 	messages := make([]oai.ChatCompletionMessageParamUnion, 0, len(transformed)+1)
 	if input.SystemPrompt != "" {
-		messages = append(messages, oai.SystemMessage(input.SystemPrompt))
+		if model.Reasoning && compat.supportsDeveloperRole {
+			messages = append(messages, oai.DeveloperMessage(input.SystemPrompt))
+		} else {
+			messages = append(messages, oai.SystemMessage(input.SystemPrompt))
+		}
 	}
 
 	for i := 0; i < len(transformed); i++ {
@@ -36,7 +44,7 @@ func convertMessages(input llm.Context, model llm.Model) ([]oai.ChatCompletionMe
 			if message == nil {
 				return nil, errors.New("assistant message is nil")
 			}
-			assistant, err := convertAssistantMessage(message)
+			assistant, err := convertAssistantMessage(message, model, compat)
 			if err != nil {
 				return nil, err
 			}
@@ -170,7 +178,11 @@ func convertImageContent(content *llm.ImageContent) (oai.ChatCompletionContentPa
 // calls, into an OpenAI assistant message param. It returns nil for an empty
 // message (no text and no tool calls), which the caller skips: some providers
 // reject assistant messages that carry neither content nor tool calls.
-func convertAssistantMessage(message *llm.AssistantMessage) (*oai.ChatCompletionAssistantMessageParam, error) {
+func convertAssistantMessage(
+	message *llm.AssistantMessage,
+	model llm.Model,
+	compat resolvedCompat,
+) (*oai.ChatCompletionAssistantMessageParam, error) {
 	assistant := &oai.ChatCompletionAssistantMessageParam{}
 	var text strings.Builder
 	var reasoning strings.Builder
@@ -213,9 +225,10 @@ func convertAssistantMessage(message *llm.AssistantMessage) (*oai.ChatCompletion
 		assistant.Content.OfString = oai.String(value)
 		hasText = true
 	}
-	if value := reasoning.String(); value != "" {
+	reasoningValue := reasoning.String()
+	if reasoningValue != "" || (compat.requiresReasoningContentOnAssistantMessages && model.Reasoning) {
 		assistant.SetExtraFields(map[string]any{
-			"reasoning_content": value,
+			"reasoning_content": reasoningValue,
 		})
 	}
 	if !hasText && len(assistant.ToolCalls) == 0 {
@@ -236,7 +249,7 @@ func encodeToolArguments(arguments map[string]any) (string, error) {
 }
 
 // convertTools maps tool definitions to OpenAI function tool params.
-func convertTools(tools []llm.ToolDefinition) ([]oai.ChatCompletionToolUnionParam, error) {
+func convertTools(tools []llm.ToolDefinition, compat resolvedCompat) ([]oai.ChatCompletionToolUnionParam, error) {
 	if len(tools) == 0 {
 		return nil, nil
 	}
@@ -257,6 +270,12 @@ func convertTools(tools []llm.ToolDefinition) ([]oai.ChatCompletionToolUnionPara
 				return nil, fmt.Errorf("decode parameters for tool %q: %w", tool.Name, err)
 			}
 			function.Parameters = parameters
+		}
+		if compat.supportsStrictMode {
+			// Match pi: advertise the standard strict field while leaving strict
+			// schema enforcement disabled unless the public Tool API gains an
+			// explicit strict option.
+			function.Strict = oai.Bool(false)
 		}
 
 		converted = append(converted, oai.ChatCompletionFunctionTool(function))

@@ -59,7 +59,21 @@ func buildParams(
 		params.Store = oai.Bool(false)
 	}
 	applyThinking(&params, model, compat, resolveEffort(model, options.Reasoning))
+	if len(tools) > 0 && compat.zaiToolStream {
+		mergeExtraFields(&params, map[string]any{"tool_stream": true})
+	}
 	return params
+}
+
+// mergeExtraFields preserves provider-specific fields already installed by
+// applyThinking. The SDK's SetExtraFields replaces rather than merges its map.
+func mergeExtraFields(params *oai.ChatCompletionNewParams, fields map[string]any) {
+	merged := maps.Clone(params.ExtraFields())
+	if merged == nil {
+		merged = make(map[string]any, len(fields))
+	}
+	maps.Copy(merged, fields)
+	params.SetExtraFields(merged)
 }
 
 func mergedHeaders(model llm.Model, options llm.StreamOptions) map[string]string {

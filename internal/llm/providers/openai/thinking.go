@@ -91,7 +91,7 @@ func applyThinking(
 	}
 
 	if len(extras) > 0 {
-		params.SetExtraFields(extras)
+		mergeExtraFields(params, extras)
 	}
 }
 
