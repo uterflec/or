@@ -7,7 +7,7 @@ import (
 	"github.com/ktsoator/or/internal/llm"
 )
 
-const API = "fake"
+const Protocol llm.Protocol = "fake"
 
 // Provider is an in-memory provider useful for tests and local development.
 type Provider struct {
@@ -21,9 +21,9 @@ func NewProvider(response string) *Provider {
 	}
 }
 
-// API returns the registry key for the fake provider.
-func (p *Provider) API() string {
-	return API
+// Protocol returns the registry key for the fake provider.
+func (p *Provider) Protocol() llm.Protocol {
+	return Protocol
 }
 
 // Stream emits a deterministic response without calling an external service.
@@ -33,11 +33,11 @@ func (p *Provider) Stream(
 	input llm.Context,
 	options llm.StreamOptions,
 ) (<-chan llm.Event, error) {
-	if model.API != p.API() {
+	if model.Protocol != p.Protocol() {
 		return nil, fmt.Errorf(
-			"model API %q does not match provider API %q",
-			model.API,
-			p.API(),
+			"model protocol %q does not match provider protocol %q",
+			model.Protocol,
+			p.Protocol(),
 		)
 	}
 

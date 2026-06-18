@@ -7,10 +7,10 @@ type StreamOptions struct {
 	APIKey string
 }
 
-// Provider adapts a concrete LLM API to the package streaming interface.
+// Provider adapts a concrete LLM protocol to the package streaming interface.
 type Provider interface {
-	// API returns the registry key used to select this provider.
-	API() string
+	// Protocol returns the registry key used to select this provider.
+	Protocol() Protocol
 
 	// Stream emits response events for the given model and conversation context.
 	Stream(

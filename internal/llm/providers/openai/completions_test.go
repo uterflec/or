@@ -57,7 +57,7 @@ func TestOpenAIProviderStreamsText(t *testing.T) {
 		context.Background(),
 		llm.Model{
 			ID:       "test-model",
-			API:      API,
+			Protocol: llm.ProtocolOpenAICompletions,
 			Provider: "openai",
 			BaseURL:  server.URL + "/v1",
 		},
@@ -172,7 +172,7 @@ func TestOpenAIProviderStreamsToolCall(t *testing.T) {
 	provider := NewProvider(server.Client())
 	events, err := provider.Stream(
 		context.Background(),
-		llm.Model{ID: "test-model", API: API, Provider: "openai", BaseURL: server.URL + "/v1"},
+		llm.Model{ID: "test-model", Protocol: llm.ProtocolOpenAICompletions, Provider: "openai", BaseURL: server.URL + "/v1"},
 		llm.Context{
 			Tools: []llm.ToolDefinition{{
 				Name:        "get_weather",
@@ -246,7 +246,7 @@ func TestOpenAIProviderCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	events, err := provider.Stream(
 		ctx,
-		llm.Model{ID: "test-model", API: API, BaseURL: server.URL + "/v1"},
+		llm.Model{ID: "test-model", Protocol: llm.ProtocolOpenAICompletions, BaseURL: server.URL + "/v1"},
 		llm.Context{Messages: []llm.Message{{
 			Role:    llm.RoleUser,
 			Content: []llm.Content{{Type: llm.ContentText, Text: "Wait."}},

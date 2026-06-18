@@ -2,6 +2,13 @@ package llm
 
 import "encoding/json"
 
+// Protocol identifies the API protocol used to communicate with a model.
+type Protocol string
+
+const (
+	ProtocolOpenAICompletions Protocol = "openai-completions"
+)
+
 // Role identifies the participant or source of a message.
 type Role string
 
@@ -66,11 +73,11 @@ type Context struct {
 
 // Model identifies the model and provider endpoint to use.
 type Model struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	API      string `json:"api"`
-	Provider string `json:"provider"`
-	BaseURL  string `json:"baseUrl"`
+	ID       string   `json:"id"`
+	Name     string   `json:"name"`
+	Protocol Protocol `json:"protocol"`
+	Provider string   `json:"provider"`
+	BaseURL  string   `json:"baseUrl"`
 }
 
 // AssistantMessage is the final or partial response returned by a provider.

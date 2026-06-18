@@ -6,7 +6,7 @@ import (
 	"fmt"
 )
 
-// Client routes LLM requests to the provider registered for a model API.
+// Client routes LLM requests to the provider registered for a model protocol.
 type Client struct {
 	registry *Registry
 }
@@ -29,11 +29,11 @@ func (c *Client) Stream(
 		return nil, errors.New("provider registry is nil")
 	}
 
-	provider, ok := c.registry.Get(model.API)
+	provider, ok := c.registry.Get(model.Protocol)
 	if !ok {
 		return nil, fmt.Errorf(
-			"no provider registered for API %q",
-			model.API,
+			"no provider registered for protocol %q",
+			model.Protocol,
 		)
 	}
 

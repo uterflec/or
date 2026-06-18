@@ -15,8 +15,6 @@ import (
 	"github.com/openai/openai-go/v3/shared"
 )
 
-const API = "openai-completions"
-
 // Provider adapts the OpenAI-compatible Chat Completions API.
 type Provider struct {
 	httpClient *http.Client
@@ -32,9 +30,9 @@ func NewProvider(httpClient *http.Client) *Provider {
 	return &Provider{httpClient: httpClient}
 }
 
-// API returns the registry key for the Chat Completions protocol.
-func (p *Provider) API() string {
-	return API
+// Protocol returns the registry key for the Chat Completions protocol.
+func (p *Provider) Protocol() llm.Protocol {
+	return llm.ProtocolOpenAICompletions
 }
 
 // Stream starts a Chat Completions request and translates SDK chunks into
@@ -45,8 +43,8 @@ func (p *Provider) Stream(
 	input llm.Context,
 	options llm.StreamOptions,
 ) (<-chan llm.Event, error) {
-	if model.API != p.API() {
-		return nil, fmt.Errorf("model API %q does not match provider API %q", model.API, p.API())
+	if model.Protocol != p.Protocol() {
+		return nil, fmt.Errorf("model protocol %q does not match provider protocol %q", model.Protocol, p.Protocol())
 	}
 	if model.ID == "" {
 		return nil, errors.New("model ID is empty")

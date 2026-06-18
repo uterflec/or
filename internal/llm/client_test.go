@@ -21,7 +21,7 @@ func TestClientCompleteWithFakeProvider(t *testing.T) {
 	model := llm.Model{
 		ID:       "fake-1",
 		Name:     "Fake Model",
-		API:      fake.API,
+		Protocol: fake.Protocol,
 		Provider: "fake",
 	}
 

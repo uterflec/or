@@ -5,42 +5,42 @@ import (
 	"sync"
 )
 
-// Registry stores providers by API name and is safe for concurrent access.
+// Registry stores providers by protocol and is safe for concurrent access.
 type Registry struct {
 	mu        sync.RWMutex
-	providers map[string]Provider
+	providers map[Protocol]Provider
 }
 
 // NewRegistry creates an empty provider registry.
 func NewRegistry() *Registry {
 	return &Registry{
-		providers: make(map[string]Provider),
+		providers: make(map[Protocol]Provider),
 	}
 }
 
-// Register adds or replaces the provider for its API name.
+// Register adds or replaces the provider for its protocol.
 func (r *Registry) Register(provider Provider) error {
 	if provider == nil {
 		return errors.New("provider is nil")
 	}
 
-	api := provider.API()
-	if api == "" {
-		return errors.New("provider API is empty")
+	protocol := provider.Protocol()
+	if protocol == "" {
+		return errors.New("provider protocol is empty")
 	}
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	r.providers[api] = provider
+	r.providers[protocol] = provider
 	return nil
 }
 
-// Get returns the provider registered for the API name.
-func (r *Registry) Get(api string) (Provider, bool) {
+// Get returns the provider registered for the protocol.
+func (r *Registry) Get(protocol Protocol) (Provider, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	provider, ok := r.providers[api]
+	provider, ok := r.providers[protocol]
 	return provider, ok
 }
