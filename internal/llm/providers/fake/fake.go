@@ -74,11 +74,8 @@ func (a *Adapter) Stream(
 
 		partial = llm.AssistantMessage{
 			Model: model.ID,
-			Content: []llm.Content{
-				{
-					Type: llm.ContentText,
-					Text: a.response,
-				},
+			Content: []llm.AssistantContent{
+				&llm.TextContent{Text: a.response},
 			},
 		}
 

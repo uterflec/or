@@ -27,13 +27,9 @@ func TestClientCompleteWithFakeProvider(t *testing.T) {
 
 	input := llm.Context{
 		Messages: []llm.Message{
-			{
-				Role: llm.RoleUser,
-				Content: []llm.Content{
-					{
-						Type: llm.ContentText,
-						Text: "hello",
-					},
+			&llm.UserMessage{
+				Content: []llm.UserContent{
+					&llm.TextContent{Text: "hello"},
 				},
 			},
 		},
@@ -64,10 +60,11 @@ func TestClientCompleteWithFakeProvider(t *testing.T) {
 		)
 	}
 
-	if message.Content[0].Text != "hello from fake provider" {
+	content, ok := message.Content[0].(*llm.TextContent)
+	if !ok || content == nil || content.Text != "hello from fake provider" {
 		t.Fatalf(
 			"unexpected response: %q",
-			message.Content[0].Text,
+			message.Content[0],
 		)
 	}
 }

@@ -63,9 +63,8 @@ func TestOpenAIProviderStreamsText(t *testing.T) {
 		},
 		llm.Context{
 			SystemPrompt: "You are helpful.",
-			Messages: []llm.Message{{
-				Role:    llm.RoleUser,
-				Content: []llm.Content{{Type: llm.ContentText, Text: "Say hello."}},
+			Messages: []llm.Message{&llm.UserMessage{
+				Content: []llm.UserContent{&llm.TextContent{Text: "Say hello."}},
 			}},
 		},
 		llm.StreamOptions{APIKey: "test-key"},
@@ -101,8 +100,83 @@ func TestOpenAIProviderStreamsText(t *testing.T) {
 	if message.StopReason != "stop" {
 		t.Fatalf("unexpected stop reason: %q", message.StopReason)
 	}
-	if len(message.Content) != 2 || message.Content[0].Thinking != "think carefully" || message.Content[1].Text != "hello world" {
+	if len(message.Content) != 2 {
 		t.Fatalf("unexpected response content: %#v", message.Content)
+	}
+	thinking, thinkingOK := message.Content[0].(*llm.ThinkingContent)
+	text, textOK := message.Content[1].(*llm.TextContent)
+	if !thinkingOK || thinking.Thinking != "think carefully" || !textOK || text.Text != "hello world" {
+		t.Fatalf("unexpected response content: %#v", message.Content)
+	}
+}
+
+func TestConvertUserMessagePreservesContentParts(t *testing.T) {
+	message, err := convertUserMessage(&llm.UserMessage{
+		Content: []llm.UserContent{
+			&llm.TextContent{Text: "Hello "},
+			&llm.TextContent{Text: "world"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if message == nil || message.OfUser == nil {
+		t.Fatal("expected a user message")
+	}
+
+	parts := message.OfUser.Content.OfArrayOfContentParts
+	if len(parts) != 2 {
+		t.Fatalf("content parts = %d, want 2", len(parts))
+	}
+	if text := parts[0].GetText(); text == nil || *text != "Hello " {
+		t.Fatalf("first content part = %v, want %q", text, "Hello ")
+	}
+	if text := parts[1].GetText(); text == nil || *text != "world" {
+		t.Fatalf("second content part = %v, want %q", text, "world")
+	}
+}
+
+func TestConvertUserMessagePreservesImageContent(t *testing.T) {
+	message, err := convertUserMessage(&llm.UserMessage{
+		Content: []llm.UserContent{
+			&llm.TextContent{Text: "What is this?"},
+			&llm.ImageContent{MIMEType: "image/png", Data: "aW1hZ2U="},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	parts := message.OfUser.Content.OfArrayOfContentParts
+	if len(parts) != 2 || parts[1].OfImageURL == nil {
+		t.Fatalf("unexpected content parts: %#v", parts)
+	}
+	if url := parts[1].OfImageURL.ImageURL.URL; url != "data:image/png;base64,aW1hZ2U=" {
+		t.Fatalf("image URL = %q", url)
+	}
+}
+
+func TestConvertMessagesAttachesToolResultImages(t *testing.T) {
+	messages, err := convertMessages(llm.Context{Messages: []llm.Message{
+		&llm.ToolResultMessage{
+			ToolCallID: "call_1",
+			Content: []llm.ToolResultContent{
+				&llm.ImageContent{MIMEType: "image/jpeg", Data: "aW1hZ2U="},
+			},
+		},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 2 || messages[0].OfTool == nil || messages[1].OfUser == nil {
+		t.Fatalf("unexpected messages: %#v", messages)
+	}
+	if content := messages[0].OfTool.Content.OfString; content.Value != "(see attached image)" {
+		t.Fatalf("tool result content = %q", content.Value)
+	}
+	parts := messages[1].OfUser.Content.OfArrayOfContentParts
+	if len(parts) != 2 || parts[1].OfImageURL == nil {
+		t.Fatalf("unexpected image attachment: %#v", parts)
 	}
 }
 
@@ -180,15 +254,15 @@ func TestOpenAIProviderStreamsToolCall(t *testing.T) {
 				Parameters:  json.RawMessage(`{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}`),
 			}},
 			Messages: []llm.Message{
-				{Role: llm.RoleUser, Content: []llm.Content{{Type: llm.ContentText, Text: "Weather in Paris?"}}},
-				{Role: llm.RoleAssistant, Content: []llm.Content{
-					{Type: llm.ContentThinking, Thinking: "I should call get_weather."},
-					{Type: llm.ContentToolCall, ToolCall: &llm.ToolCall{
+				&llm.UserMessage{Content: []llm.UserContent{&llm.TextContent{Text: "Weather in Paris?"}}},
+				&llm.AssistantMessage{Content: []llm.AssistantContent{
+					&llm.ThinkingContent{Thinking: "I should call get_weather."},
+					&llm.ToolCall{
 						ID: "call_1", Name: "get_weather", Arguments: `{"city":"Paris"}`,
-					}},
+					},
 				}},
-				{Role: llm.RoleToolResult, ToolCallID: "call_1", ToolName: "get_weather", Content: []llm.Content{
-					{Type: llm.ContentText, Text: "Sunny, 20C"},
+				&llm.ToolResultMessage{ToolCallID: "call_1", ToolName: "get_weather", Content: []llm.ToolResultContent{
+					&llm.TextContent{Text: "Sunny, 20C"},
 				}},
 			},
 		},
@@ -223,10 +297,14 @@ func TestOpenAIProviderStreamsToolCall(t *testing.T) {
 	if message.StopReason != "toolUse" {
 		t.Fatalf("unexpected stop reason: %q", message.StopReason)
 	}
-	if len(message.Content) != 1 || message.Content[0].Type != llm.ContentToolCall || message.Content[0].ToolCall == nil {
+	if len(message.Content) != 1 {
 		t.Fatalf("unexpected response content: %#v", message.Content)
 	}
-	if call := message.Content[0].ToolCall; call.ID != "call_2" || call.Arguments != `{"city":"Paris"}` {
+	call, ok := message.Content[0].(*llm.ToolCall)
+	if !ok || call == nil {
+		t.Fatalf("unexpected response content: %#v", message.Content)
+	}
+	if call.ID != "call_2" || call.Arguments != `{"city":"Paris"}` {
 		t.Fatalf("unexpected tool call in final message: %#v", call)
 	}
 }
@@ -247,9 +325,8 @@ func TestOpenAIProviderCancellation(t *testing.T) {
 	events, err := adapter.Stream(
 		ctx,
 		llm.Model{ID: "test-model", Protocol: llm.ProtocolOpenAICompletions, BaseURL: server.URL + "/v1"},
-		llm.Context{Messages: []llm.Message{{
-			Role:    llm.RoleUser,
-			Content: []llm.Content{{Type: llm.ContentText, Text: "Wait."}},
+		llm.Context{Messages: []llm.Message{&llm.UserMessage{
+			Content: []llm.UserContent{&llm.TextContent{Text: "Wait."}},
 		}}},
 		llm.StreamOptions{APIKey: "test-key"},
 	)

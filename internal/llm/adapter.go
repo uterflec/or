@@ -9,7 +9,7 @@ type StreamOptions struct {
 
 // ProtocolAdapter translates between a concrete LLM protocol and the package streaming interface.
 type ProtocolAdapter interface {
-	// Protocol returns the registry key used to select this provider.
+	// Protocol returns the registry key used to select this adapter.
 	Protocol() Protocol
 
 	// Stream emits response events for the given model and conversation context.

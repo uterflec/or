@@ -148,10 +148,10 @@ func (a *Adapter) Stream(
 		}
 		output.StopReason = stopReason
 		for _, content := range output.Content {
-			if content.Type == llm.ContentToolCall && content.ToolCall != nil {
+			if toolCall, ok := content.(*llm.ToolCall); ok && toolCall != nil {
 				events <- llm.Event{
 					Type:     llm.EventToolCallEnd,
-					ToolCall: cloneToolCall(content.ToolCall),
+					ToolCall: cloneToolCall(toolCall),
 					Partial:  cloneAssistantMessage(output),
 				}
 			}
@@ -168,15 +168,25 @@ func convertMessages(input llm.Context) ([]oai.ChatCompletionMessageParamUnion, 
 		messages = append(messages, oai.SystemMessage(input.SystemPrompt))
 	}
 
-	for _, message := range input.Messages {
-		switch message.Role {
-		case llm.RoleUser:
-			text, err := messageText(message)
+	for i := 0; i < len(input.Messages); i++ {
+		rawMessage := input.Messages[i]
+		switch message := rawMessage.(type) {
+		case *llm.UserMessage:
+			if message == nil {
+				return nil, errors.New("user message is nil")
+			}
+			userMessage, err := convertUserMessage(message)
 			if err != nil {
 				return nil, err
 			}
-			messages = append(messages, oai.UserMessage(text))
-		case llm.RoleAssistant:
+			if userMessage == nil {
+				continue
+			}
+			messages = append(messages, *userMessage)
+		case *llm.AssistantMessage:
+			if message == nil {
+				return nil, errors.New("assistant message is nil")
+			}
 			assistant, err := convertAssistantMessage(message)
 			if err != nil {
 				return nil, err
@@ -185,52 +195,160 @@ func convertMessages(input llm.Context) ([]oai.ChatCompletionMessageParamUnion, 
 				continue
 			}
 			messages = append(messages, oai.ChatCompletionMessageParamUnion{OfAssistant: assistant})
-		case llm.RoleToolResult:
-			if message.ToolCallID == "" {
-				return nil, errors.New("tool result message is missing tool call ID")
+		case *llm.ToolResultMessage:
+			var images []oai.ChatCompletionContentPartUnionParam
+			for ; i < len(input.Messages); i++ {
+				toolResult, ok := input.Messages[i].(*llm.ToolResultMessage)
+				if !ok {
+					break
+				}
+				toolMessage, resultImages, err := convertToolResultMessage(toolResult)
+				if err != nil {
+					return nil, err
+				}
+				messages = append(messages, toolMessage)
+				images = append(images, resultImages...)
 			}
-			text, err := messageText(message)
-			if err != nil {
-				return nil, err
+			i--
+			if len(images) > 0 {
+				parts := []oai.ChatCompletionContentPartUnionParam{
+					oai.TextContentPart("Attached image(s) from tool result:"),
+				}
+				parts = append(parts, images...)
+				messages = append(messages, oai.UserMessage(parts))
 			}
-			messages = append(messages, oai.ToolMessage(text, message.ToolCallID))
 		default:
-			return nil, fmt.Errorf("unsupported message role %q", message.Role)
+			return nil, fmt.Errorf("unsupported message type %T", rawMessage)
 		}
 	}
 
 	return messages, nil
 }
 
+func convertUserMessage(message *llm.UserMessage) (*oai.ChatCompletionMessageParamUnion, error) {
+	if len(message.Content) == 1 {
+		if content, ok := message.Content[0].(*llm.TextContent); ok && content != nil {
+			converted := oai.UserMessage(content.Text)
+			return &converted, nil
+		}
+	}
+
+	parts := make([]oai.ChatCompletionContentPartUnionParam, 0, len(message.Content))
+	for _, rawContent := range message.Content {
+		switch content := rawContent.(type) {
+		case *llm.TextContent:
+			if content == nil {
+				return nil, errors.New("user text content is nil")
+			}
+			parts = append(parts, oai.TextContentPart(content.Text))
+		case *llm.ImageContent:
+			image, err := convertImageContent(content)
+			if err != nil {
+				return nil, err
+			}
+			parts = append(parts, image)
+		default:
+			return nil, fmt.Errorf("unsupported user content type %T", rawContent)
+		}
+	}
+	if len(parts) == 0 {
+		return nil, nil
+	}
+
+	converted := oai.UserMessage(parts)
+	return &converted, nil
+}
+
+func convertToolResultMessage(message *llm.ToolResultMessage) (
+	oai.ChatCompletionMessageParamUnion,
+	[]oai.ChatCompletionContentPartUnionParam,
+	error,
+) {
+	if message == nil {
+		return oai.ChatCompletionMessageParamUnion{}, nil, errors.New("tool result message is nil")
+	}
+	if message.ToolCallID == "" {
+		return oai.ChatCompletionMessageParamUnion{}, nil, errors.New("tool result message is missing tool call ID")
+	}
+
+	var textParts []string
+	var images []oai.ChatCompletionContentPartUnionParam
+	for _, rawContent := range message.Content {
+		switch content := rawContent.(type) {
+		case *llm.TextContent:
+			if content == nil {
+				return oai.ChatCompletionMessageParamUnion{}, nil, errors.New("tool result text content is nil")
+			}
+			textParts = append(textParts, content.Text)
+		case *llm.ImageContent:
+			image, err := convertImageContent(content)
+			if err != nil {
+				return oai.ChatCompletionMessageParamUnion{}, nil, err
+			}
+			images = append(images, image)
+		default:
+			return oai.ChatCompletionMessageParamUnion{}, nil,
+				fmt.Errorf("unsupported tool result content type %T", rawContent)
+		}
+	}
+
+	result := strings.Join(textParts, "\n")
+	if result == "" && len(images) > 0 {
+		result = "(see attached image)"
+	}
+	return oai.ToolMessage(result, message.ToolCallID), images, nil
+}
+
+func convertImageContent(content *llm.ImageContent) (oai.ChatCompletionContentPartUnionParam, error) {
+	if content == nil {
+		return oai.ChatCompletionContentPartUnionParam{}, errors.New("image content is nil")
+	}
+	if content.MIMEType == "" {
+		return oai.ChatCompletionContentPartUnionParam{}, errors.New("image content is missing MIME type")
+	}
+	if content.Data == "" {
+		return oai.ChatCompletionContentPartUnionParam{}, errors.New("image content is missing data")
+	}
+	return oai.ImageContentPart(oai.ChatCompletionContentPartImageImageURLParam{
+		URL: "data:" + content.MIMEType + ";base64," + content.Data,
+	}), nil
+}
+
 // convertAssistantMessage serializes an assistant message, including any tool
 // calls, into an OpenAI assistant message param. It returns nil for an empty
 // message (no text and no tool calls), which the caller skips: some providers
 // reject assistant messages that carry neither content nor tool calls.
-func convertAssistantMessage(message llm.Message) (*oai.ChatCompletionAssistantMessageParam, error) {
+func convertAssistantMessage(message *llm.AssistantMessage) (*oai.ChatCompletionAssistantMessageParam, error) {
 	assistant := &oai.ChatCompletionAssistantMessageParam{}
 	var text strings.Builder
 	var reasoning strings.Builder
-	for _, content := range message.Content {
-		switch content.Type {
-		case llm.ContentText:
+	for _, rawContent := range message.Content {
+		switch content := rawContent.(type) {
+		case *llm.TextContent:
+			if content == nil {
+				return nil, errors.New("assistant text content is nil")
+			}
 			text.WriteString(content.Text)
-		case llm.ContentThinking:
+		case *llm.ThinkingContent:
+			if content == nil {
+				return nil, errors.New("assistant thinking content is nil")
+			}
 			reasoning.WriteString(content.Thinking)
-		case llm.ContentToolCall:
-			if content.ToolCall == nil {
+		case *llm.ToolCall:
+			if content == nil {
 				return nil, errors.New("assistant tool call content is missing tool call data")
 			}
 			assistant.ToolCalls = append(assistant.ToolCalls, oai.ChatCompletionMessageToolCallUnionParam{
 				OfFunction: &oai.ChatCompletionMessageFunctionToolCallParam{
-					ID: content.ToolCall.ID,
+					ID: content.ID,
 					Function: oai.ChatCompletionMessageFunctionToolCallFunctionParam{
-						Name:      content.ToolCall.Name,
-						Arguments: content.ToolCall.Arguments,
+						Name:      content.Name,
+						Arguments: content.Arguments,
 					},
 				},
 			})
 		default:
-			return nil, fmt.Errorf("content type %q is not supported in assistant messages", content.Type)
+			return nil, fmt.Errorf("unsupported assistant content type %T", rawContent)
 		}
 	}
 
@@ -292,7 +410,7 @@ func ensureAssistantToolCall(
 	if !ok {
 		block = &llm.ToolCall{ID: delta.ID, Name: delta.Function.Name}
 		byIndex[delta.Index] = block
-		message.Content = append(message.Content, llm.Content{Type: llm.ContentToolCall, ToolCall: block})
+		message.Content = append(message.Content, block)
 	}
 	if block.ID == "" && delta.ID != "" {
 		block.ID = delta.ID
@@ -303,49 +421,44 @@ func ensureAssistantToolCall(
 	return block
 }
 
-func messageText(message llm.Message) (string, error) {
-	var text strings.Builder
-	for _, content := range message.Content {
-		switch content.Type {
-		case llm.ContentText:
-			text.WriteString(content.Text)
-		case llm.ContentThinking:
-			if message.Role != llm.RoleAssistant {
-				return "", fmt.Errorf("thinking content is not valid for role %q", message.Role)
-			}
-		default:
-			return "", fmt.Errorf("content type %q is not supported by the text-only OpenAI provider", content.Type)
-		}
-	}
-	return text.String(), nil
-}
-
 func appendAssistantText(message *llm.AssistantMessage, delta string) {
-	for i := range message.Content {
-		if message.Content[i].Type == llm.ContentText {
-			message.Content[i].Text += delta
+	for _, rawContent := range message.Content {
+		if content, ok := rawContent.(*llm.TextContent); ok && content != nil {
+			content.Text += delta
 			return
 		}
 	}
-	message.Content = append(message.Content, llm.Content{Type: llm.ContentText, Text: delta})
+	message.Content = append(message.Content, &llm.TextContent{Text: delta})
 }
 
 func appendAssistantThinking(message *llm.AssistantMessage, delta string) {
-	for i := range message.Content {
-		if message.Content[i].Type == llm.ContentThinking {
-			message.Content[i].Thinking += delta
+	for _, rawContent := range message.Content {
+		if content, ok := rawContent.(*llm.ThinkingContent); ok && content != nil {
+			content.Thinking += delta
 			return
 		}
 	}
-	message.Content = append(message.Content, llm.Content{Type: llm.ContentThinking, Thinking: delta})
+	message.Content = append(message.Content, &llm.ThinkingContent{Thinking: delta})
 }
 
 func cloneAssistantMessage(message llm.AssistantMessage) *llm.AssistantMessage {
 	clone := message
-	clone.Content = make([]llm.Content, len(message.Content))
-	for i, content := range message.Content {
-		clone.Content[i] = content
-		clone.Content[i].ToolCall = cloneToolCall(content.ToolCall)
+	clone.Content = make([]llm.AssistantContent, len(message.Content))
+	for i, rawContent := range message.Content {
+		switch content := rawContent.(type) {
+		case *llm.TextContent:
+			if content != nil {
+				copied := *content
+				clone.Content[i] = &copied
+			}
+		case *llm.ThinkingContent:
+			if content != nil {
+				copied := *content
+				clone.Content[i] = &copied
+			}
+		case *llm.ToolCall:
+			clone.Content[i] = cloneToolCall(content)
+		}
 	}
 	return &clone
 }
