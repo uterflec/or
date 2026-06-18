@@ -24,5 +24,5 @@ type Result struct {
 // recover. It must honor ctx cancellation.
 type Tool interface {
 	Definition() llm.ToolDefinition
-	Execute(ctx context.Context, arguments string) (Result, error)
+	Execute(ctx context.Context, arguments map[string]any) (Result, error)
 }

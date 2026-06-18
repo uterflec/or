@@ -11,14 +11,15 @@ import (
 	"github.com/openai/openai-go/v3/shared"
 )
 
-func convertMessages(input llm.Context) ([]oai.ChatCompletionMessageParamUnion, error) {
-	messages := make([]oai.ChatCompletionMessageParamUnion, 0, len(input.Messages)+1)
+func convertMessages(input llm.Context, model llm.Model) ([]oai.ChatCompletionMessageParamUnion, error) {
+	transformed := llm.TransformMessages(input.Messages, model)
+	messages := make([]oai.ChatCompletionMessageParamUnion, 0, len(transformed)+1)
 	if input.SystemPrompt != "" {
 		messages = append(messages, oai.SystemMessage(input.SystemPrompt))
 	}
 
-	for i := 0; i < len(input.Messages); i++ {
-		rawMessage := input.Messages[i]
+	for i := 0; i < len(transformed); i++ {
+		rawMessage := transformed[i]
 		switch message := rawMessage.(type) {
 		case *llm.UserMessage:
 			if message == nil {
@@ -44,8 +45,8 @@ func convertMessages(input llm.Context) ([]oai.ChatCompletionMessageParamUnion, 
 			}
 		case *llm.ToolResultMessage:
 			var images []oai.ChatCompletionContentPartUnionParam
-			for ; i < len(input.Messages); i++ {
-				toolResult, ok := input.Messages[i].(*llm.ToolResultMessage)
+			for ; i < len(transformed); i++ {
+				toolResult, ok := transformed[i].(*llm.ToolResultMessage)
 				if !ok {
 					break
 				}
@@ -189,12 +190,16 @@ func convertAssistantMessage(message *llm.AssistantMessage) (*oai.ChatCompletion
 			if content == nil {
 				return nil, errors.New("assistant tool call content is missing tool call data")
 			}
+			arguments, err := encodeToolArguments(content.Arguments)
+			if err != nil {
+				return nil, fmt.Errorf("encode arguments for tool call %q: %w", content.Name, err)
+			}
 			assistant.ToolCalls = append(assistant.ToolCalls, oai.ChatCompletionMessageToolCallUnionParam{
 				OfFunction: &oai.ChatCompletionMessageFunctionToolCallParam{
 					ID: content.ID,
 					Function: oai.ChatCompletionMessageFunctionToolCallFunctionParam{
 						Name:      content.Name,
-						Arguments: content.Arguments,
+						Arguments: arguments,
 					},
 				},
 			})
@@ -217,6 +222,17 @@ func convertAssistantMessage(message *llm.AssistantMessage) (*oai.ChatCompletion
 		return nil, nil
 	}
 	return assistant, nil
+}
+
+func encodeToolArguments(arguments map[string]any) (string, error) {
+	if arguments == nil {
+		return "{}", nil
+	}
+	encoded, err := json.Marshal(arguments)
+	if err != nil {
+		return "", err
+	}
+	return string(encoded), nil
 }
 
 // convertTools maps tool definitions to OpenAI function tool params.

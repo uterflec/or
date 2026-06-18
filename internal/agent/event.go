@@ -40,7 +40,7 @@ type Event struct {
 	// ToolCallID, ToolName, Args, Result, IsError are set for tool_execution_* events.
 	ToolCallID string
 	ToolName   string
-	Args       string
+	Args       map[string]any
 	Result     *Result
 	IsError    bool
 

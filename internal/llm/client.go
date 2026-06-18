@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // Client routes LLM requests to the adapter registered for a model protocol.
@@ -19,12 +20,7 @@ func NewClient(registry *Registry) *Client {
 }
 
 // Stream starts a streaming completion request for the given model and input.
-func (c *Client) Stream(
-	ctx context.Context,
-	model Model,
-	input Context,
-	options StreamOptions,
-) (<-chan Event, error) {
+func (c *Client) Stream(ctx context.Context, model Model, input Context, options StreamOptions) (<-chan Event, error) {
 	if c.registry == nil {
 		return nil, errors.New("provider registry is nil")
 	}
@@ -35,6 +31,9 @@ func (c *Client) Stream(
 			"no adapter registered for protocol %q",
 			model.Protocol,
 		)
+	}
+	if strings.TrimSpace(options.APIKey) == "" {
+		options.APIKey = GetEnvAPIKeyWithEnv(model.Provider, options.Env)
 	}
 
 	return adapter.Stream(ctx, model, input, options)

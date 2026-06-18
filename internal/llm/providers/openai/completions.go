@@ -33,23 +33,28 @@ func (a *Adapter) Protocol() llm.Protocol {
 
 // Stream starts a Chat Completions request and translates SDK chunks into
 // package events. It supports text, reasoning, and tool call content.
-func (a *Adapter) Stream(
-	ctx context.Context,
-	model llm.Model,
-	input llm.Context,
-	options llm.StreamOptions,
-) (<-chan llm.Event, error) {
+func (a *Adapter) Stream(ctx context.Context, model llm.Model, input llm.Context, options llm.StreamOptions) (<-chan llm.Event, error) {
 	if model.Protocol != a.Protocol() {
 		return nil, fmt.Errorf("model protocol %q does not match adapter protocol %q", model.Protocol, a.Protocol())
 	}
 	if model.ID == "" {
 		return nil, errors.New("model ID is empty")
 	}
+	if model.Compatibility != nil {
+		compatibility, ok := model.Compatibility.(*llm.OpenAICompletionsCompatibility)
+		if !ok || compatibility == nil {
+			return nil, fmt.Errorf(
+				"model compatibility type %T is not valid for protocol %q",
+				model.Compatibility,
+				model.Protocol,
+			)
+		}
+	}
 	if options.APIKey == "" {
 		return nil, errors.New("OpenAI API key is empty")
 	}
 
-	messages, err := convertMessages(input)
+	messages, err := convertMessages(input, model)
 	if err != nil {
 		return nil, err
 	}
@@ -66,6 +71,9 @@ func (a *Adapter) Stream(
 	if model.BaseURL != "" {
 		clientOptions = append(clientOptions, option.WithBaseURL(model.BaseURL))
 	}
+	for name, value := range mergedHeaders(model, options) {
+		clientOptions = append(clientOptions, option.WithHeader(name, value))
+	}
 	client := oai.NewClient(clientOptions...)
 
 	events := make(chan llm.Event)
@@ -73,7 +81,6 @@ func (a *Adapter) Stream(
 		defer close(events)
 
 		output := llm.NewAssistantMessage(model)
-		events <- llm.Event{Type: llm.EventStart, Partial: cloneAssistantMessage(output)}
 
 		params := oai.ChatCompletionNewParams{
 			Model:    model.ID,
@@ -85,12 +92,38 @@ func (a *Adapter) Stream(
 		if len(tools) > 0 {
 			params.Tools = tools
 		}
+		compat := resolveCompat(model)
+		if options.MaxTokens > 0 {
+			if compat.maxTokensField == "max_tokens" {
+				params.MaxTokens = oai.Int(options.MaxTokens)
+			} else {
+				params.MaxCompletionTokens = oai.Int(options.MaxTokens)
+			}
+		}
+		if options.Temperature != nil {
+			params.Temperature = oai.Float(*options.Temperature)
+		}
+		if compat.supportsStore {
+			params.Store = oai.Bool(false)
+		}
+		applyThinking(&params, model, compat, resolveEffort(model, options.Reasoning))
+
 		stream := client.Chat.Completions.NewStreaming(ctx, params)
 		defer stream.Close()
 
 		toolCallsByIndex := make(map[int64]*llm.ToolCall)
+		toolCallsByID := make(map[string]*llm.ToolCall)
+		toolArgumentJSON := make(map[*llm.ToolCall]string)
+
 		finishReason := ""
+		responseStarted := false
 		for stream.Next() {
+			// A successful Next means the HTTP response and streaming body have
+			// been established. Emit start before processing the first chunk.
+			if !responseStarted {
+				responseStarted = true
+				events <- llm.Event{Type: llm.EventStart, Partial: cloneAssistantMessage(output)}
+			}
 			chunk := stream.Current()
 			if output.ResponseID == "" {
 				output.ResponseID = chunk.ID
@@ -99,14 +132,27 @@ func (a *Adapter) Stream(
 				output.ResponseModel = chunk.Model
 			}
 			if chunk.JSON.Usage.Valid() {
-				output.Usage = parseUsage(chunk)
+				output.Usage = usageFrom(chunk.Usage, model)
 			}
 			if len(chunk.Choices) == 0 {
 				continue
 			}
 
 			choice := chunk.Choices[0]
-			reasoningDelta, err := extraString(choice.Delta.JSON.ExtraFields, "reasoning_content")
+			// Fallback for providers (e.g. Moonshot) that report usage under
+			// choice.usage instead of the standard top-level chunk.usage.
+			if !chunk.JSON.Usage.Valid() {
+				usage, ok, err := usageFromExtra(choice.JSON.ExtraFields, "usage", model)
+				if err != nil {
+					emitError(events, output, ctx, err)
+					return
+				}
+				if ok {
+					output.Usage = usage
+				}
+			}
+
+			reasoningDelta, err := extraReasoning(choice.Delta.JSON.ExtraFields)
 			if err != nil {
 				emitError(events, output, ctx, err)
 				return
@@ -146,7 +192,7 @@ func (a *Adapter) Stream(
 				}
 			}
 			for _, toolDelta := range choice.Delta.ToolCalls {
-				block, contentIndex, started := ensureAssistantToolCall(&output, toolCallsByIndex, toolDelta)
+				block, contentIndex, started := ensureAssistantToolCall(&output, toolCallsByIndex, toolCallsByID, toolDelta)
 				if started {
 					events <- llm.Event{
 						Type:         llm.EventToolCallStart,
@@ -156,7 +202,7 @@ func (a *Adapter) Stream(
 					}
 				}
 				if toolDelta.Function.Arguments != "" {
-					block.Arguments += toolDelta.Function.Arguments
+					toolArgumentJSON[block] += toolDelta.Function.Arguments
 				}
 				events <- llm.Event{
 					Type:         llm.EventToolCallDelta,
@@ -199,6 +245,9 @@ func (a *Adapter) Stream(
 					Partial:      cloneAssistantMessage(output),
 				}
 			case *llm.ToolCall:
+				// Raw JSON fragments are an implementation detail. Final messages
+				// expose the same structured argument object as pi.
+				content.Arguments = parseToolArguments(toolArgumentJSON[content])
 				events <- llm.Event{
 					Type:         llm.EventToolCallEnd,
 					ContentIndex: contentIndex,
