@@ -11,8 +11,8 @@ import (
 func TestClientCompleteWithFakeProvider(t *testing.T) {
 	registry := llm.NewRegistry()
 
-	provider := fake.NewProvider("hello from fake provider")
-	if err := registry.Register(provider); err != nil {
+	adapter := fake.NewAdapter("hello from fake provider")
+	if err := registry.Register(adapter); err != nil {
 		t.Fatalf("register provider: %v", err)
 	}
 

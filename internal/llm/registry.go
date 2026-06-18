@@ -5,42 +5,42 @@ import (
 	"sync"
 )
 
-// Registry stores providers by protocol and is safe for concurrent access.
+// Registry stores protocol adapters and is safe for concurrent access.
 type Registry struct {
-	mu        sync.RWMutex
-	providers map[Protocol]Provider
+	mu       sync.RWMutex
+	adapters map[Protocol]ProtocolAdapter
 }
 
 // NewRegistry creates an empty provider registry.
 func NewRegistry() *Registry {
 	return &Registry{
-		providers: make(map[Protocol]Provider),
+		adapters: make(map[Protocol]ProtocolAdapter),
 	}
 }
 
-// Register adds or replaces the provider for its protocol.
-func (r *Registry) Register(provider Provider) error {
-	if provider == nil {
-		return errors.New("provider is nil")
+// Register adds or replaces an adapter for its protocol.
+func (r *Registry) Register(adapter ProtocolAdapter) error {
+	if adapter == nil {
+		return errors.New("protocol adapter is nil")
 	}
 
-	protocol := provider.Protocol()
+	protocol := adapter.Protocol()
 	if protocol == "" {
-		return errors.New("provider protocol is empty")
+		return errors.New("protocol adapter protocol is empty")
 	}
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	r.providers[protocol] = provider
+	r.adapters[protocol] = adapter
 	return nil
 }
 
-// Get returns the provider registered for the protocol.
-func (r *Registry) Get(protocol Protocol) (Provider, bool) {
+// Get returns the adapter registered for the protocol.
+func (r *Registry) Get(protocol Protocol) (ProtocolAdapter, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	provider, ok := r.providers[protocol]
-	return provider, ok
+	adapter, ok := r.adapters[protocol]
+	return adapter, ok
 }

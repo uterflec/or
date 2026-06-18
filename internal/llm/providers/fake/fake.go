@@ -9,35 +9,35 @@ import (
 
 const Protocol llm.Protocol = "fake"
 
-// Provider is an in-memory provider useful for tests and local development.
-type Provider struct {
+// Adapter is an in-memory protocol adapter useful for tests and local development.
+type Adapter struct {
 	response string
 }
 
-// NewProvider creates a fake provider that streams the given response.
-func NewProvider(response string) *Provider {
-	return &Provider{
+// NewAdapter creates a fake adapter that streams the given response.
+func NewAdapter(response string) *Adapter {
+	return &Adapter{
 		response: response,
 	}
 }
 
 // Protocol returns the registry key for the fake provider.
-func (p *Provider) Protocol() llm.Protocol {
+func (a *Adapter) Protocol() llm.Protocol {
 	return Protocol
 }
 
 // Stream emits a deterministic response without calling an external service.
-func (p *Provider) Stream(
+func (a *Adapter) Stream(
 	ctx context.Context,
 	model llm.Model,
 	input llm.Context,
 	options llm.StreamOptions,
 ) (<-chan llm.Event, error) {
-	if model.Protocol != p.Protocol() {
+	if model.Protocol != a.Protocol() {
 		return nil, fmt.Errorf(
-			"model protocol %q does not match provider protocol %q",
+			"model protocol %q does not match adapter protocol %q",
 			model.Protocol,
-			p.Protocol(),
+			a.Protocol(),
 		)
 	}
 
@@ -77,14 +77,14 @@ func (p *Provider) Stream(
 			Content: []llm.Content{
 				{
 					Type: llm.ContentText,
-					Text: p.response,
+					Text: a.response,
 				},
 			},
 		}
 
 		events <- llm.Event{
 			Type:    llm.EventTextDelta,
-			Delta:   p.response,
+			Delta:   a.response,
 			Partial: &partial,
 		}
 

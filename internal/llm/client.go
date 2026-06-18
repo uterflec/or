@@ -6,7 +6,7 @@ import (
 	"fmt"
 )
 
-// Client routes LLM requests to the provider registered for a model protocol.
+// Client routes LLM requests to the adapter registered for a model protocol.
 type Client struct {
 	registry *Registry
 }
@@ -29,15 +29,15 @@ func (c *Client) Stream(
 		return nil, errors.New("provider registry is nil")
 	}
 
-	provider, ok := c.registry.Get(model.Protocol)
+	adapter, ok := c.registry.Get(model.Protocol)
 	if !ok {
 		return nil, fmt.Errorf(
-			"no provider registered for protocol %q",
+			"no adapter registered for protocol %q",
 			model.Protocol,
 		)
 	}
 
-	return provider.Stream(ctx, model, input, options)
+	return adapter.Stream(ctx, model, input, options)
 }
 
 // Complete consumes a provider stream and returns the final assistant message.

@@ -49,7 +49,7 @@ func TestOpenAIProviderStreamsText(t *testing.T) {
 	defer server.Close()
 
 	registry := llm.NewRegistry()
-	if err := registry.Register(NewProvider(server.Client())); err != nil {
+	if err := registry.Register(NewAdapter(server.Client())); err != nil {
 		t.Fatalf("register provider: %v", err)
 	}
 
@@ -169,8 +169,8 @@ func TestOpenAIProviderStreamsToolCall(t *testing.T) {
 	}))
 	defer server.Close()
 
-	provider := NewProvider(server.Client())
-	events, err := provider.Stream(
+	adapter := NewAdapter(server.Client())
+	events, err := adapter.Stream(
 		context.Background(),
 		llm.Model{ID: "test-model", Protocol: llm.ProtocolOpenAICompletions, Provider: "openai", BaseURL: server.URL + "/v1"},
 		llm.Context{
@@ -242,9 +242,9 @@ func TestOpenAIProviderCancellation(t *testing.T) {
 	}))
 	defer server.Close()
 
-	provider := NewProvider(server.Client())
+	adapter := NewAdapter(server.Client())
 	ctx, cancel := context.WithCancel(context.Background())
-	events, err := provider.Stream(
+	events, err := adapter.Stream(
 		ctx,
 		llm.Model{ID: "test-model", Protocol: llm.ProtocolOpenAICompletions, BaseURL: server.URL + "/v1"},
 		llm.Context{Messages: []llm.Message{{

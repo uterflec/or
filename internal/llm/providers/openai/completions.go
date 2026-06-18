@@ -15,36 +15,36 @@ import (
 	"github.com/openai/openai-go/v3/shared"
 )
 
-// Provider adapts the OpenAI-compatible Chat Completions API.
-type Provider struct {
+// Adapter translates the OpenAI-compatible Chat Completions protocol.
+type Adapter struct {
 	httpClient *http.Client
 }
 
-// NewProvider creates a provider that uses httpClient for requests.
+// NewAdapter creates an adapter that uses httpClient for requests.
 // A nil client uses http.DefaultClient.
-func NewProvider(httpClient *http.Client) *Provider {
+func NewAdapter(httpClient *http.Client) *Adapter {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
 
-	return &Provider{httpClient: httpClient}
+	return &Adapter{httpClient: httpClient}
 }
 
 // Protocol returns the registry key for the Chat Completions protocol.
-func (p *Provider) Protocol() llm.Protocol {
+func (a *Adapter) Protocol() llm.Protocol {
 	return llm.ProtocolOpenAICompletions
 }
 
 // Stream starts a Chat Completions request and translates SDK chunks into
 // package events. It supports text, reasoning, and tool call content.
-func (p *Provider) Stream(
+func (a *Adapter) Stream(
 	ctx context.Context,
 	model llm.Model,
 	input llm.Context,
 	options llm.StreamOptions,
 ) (<-chan llm.Event, error) {
-	if model.Protocol != p.Protocol() {
-		return nil, fmt.Errorf("model protocol %q does not match provider protocol %q", model.Protocol, p.Protocol())
+	if model.Protocol != a.Protocol() {
+		return nil, fmt.Errorf("model protocol %q does not match adapter protocol %q", model.Protocol, a.Protocol())
 	}
 	if model.ID == "" {
 		return nil, errors.New("model ID is empty")
@@ -65,7 +65,7 @@ func (p *Provider) Stream(
 
 	clientOptions := []option.RequestOption{
 		option.WithAPIKey(options.APIKey),
-		option.WithHTTPClient(p.httpClient),
+		option.WithHTTPClient(a.httpClient),
 	}
 	if model.BaseURL != "" {
 		clientOptions = append(clientOptions, option.WithBaseURL(model.BaseURL))

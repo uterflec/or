@@ -7,8 +7,8 @@ type StreamOptions struct {
 	APIKey string
 }
 
-// Provider adapts a concrete LLM protocol to the package streaming interface.
-type Provider interface {
+// ProtocolAdapter translates between a concrete LLM protocol and the package streaming interface.
+type ProtocolAdapter interface {
 	// Protocol returns the registry key used to select this provider.
 	Protocol() Protocol
 
