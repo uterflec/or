@@ -1,34 +1,38 @@
-package llm
+package fake
 
 import (
 	"context"
 	"fmt"
+
+	"github.com/ktsoator/or/internal/llm"
 )
 
-// FakeProvider is an in-memory provider useful for tests and local development.
-type FakeProvider struct {
+const API = "fake"
+
+// Provider is an in-memory provider useful for tests and local development.
+type Provider struct {
 	response string
 }
 
-// NewFakeProvider creates a fake provider that streams the given response.
-func NewFakeProvider(response string) *FakeProvider {
-	return &FakeProvider{
+// NewProvider creates a fake provider that streams the given response.
+func NewProvider(response string) *Provider {
+	return &Provider{
 		response: response,
 	}
 }
 
 // API returns the registry key for the fake provider.
-func (p *FakeProvider) API() string {
-	return "fake"
+func (p *Provider) API() string {
+	return API
 }
 
 // Stream emits a deterministic response without calling an external service.
-func (p *FakeProvider) Stream(
+func (p *Provider) Stream(
 	ctx context.Context,
-	model Model,
-	input Context,
-	options StreamOptions,
-) (<-chan Event, error) {
+	model llm.Model,
+	input llm.Context,
+	options llm.StreamOptions,
+) (<-chan llm.Event, error) {
 	if model.API != p.API() {
 		return nil, fmt.Errorf(
 			"model API %q does not match provider API %q",
@@ -37,29 +41,29 @@ func (p *FakeProvider) Stream(
 		)
 	}
 
-	events := make(chan Event, 4)
+	events := make(chan llm.Event, 4)
 
 	go func() {
 		defer close(events)
 
-		partial := AssistantMessage{
+		partial := llm.AssistantMessage{
 			Model: model.ID,
 		}
 
-		events <- Event{
-			Type:    EventStart,
+		events <- llm.Event{
+			Type:    llm.EventStart,
 			Partial: &partial,
 		}
 
 		select {
 		case <-ctx.Done():
-			failed := AssistantMessage{
+			failed := llm.AssistantMessage{
 				Model:      model.ID,
 				StopReason: "aborted",
 			}
 
-			events <- Event{
-				Type:    EventError,
+			events <- llm.Event{
+				Type:    llm.EventError,
 				Message: &failed,
 				Err:     ctx.Err(),
 			}
@@ -68,18 +72,18 @@ func (p *FakeProvider) Stream(
 		default:
 		}
 
-		partial = AssistantMessage{
+		partial = llm.AssistantMessage{
 			Model: model.ID,
-			Content: []Content{
+			Content: []llm.Content{
 				{
-					Type: ContentText,
+					Type: llm.ContentText,
 					Text: p.response,
 				},
 			},
 		}
 
-		events <- Event{
-			Type:    EventTextDelta,
+		events <- llm.Event{
+			Type:    llm.EventTextDelta,
 			Delta:   p.response,
 			Partial: &partial,
 		}
@@ -87,8 +91,8 @@ func (p *FakeProvider) Stream(
 		finalMessage := partial
 		finalMessage.StopReason = "stop"
 
-		events <- Event{
-			Type:    EventDone,
+		events <- llm.Event{
+			Type:    llm.EventDone,
 			Message: &finalMessage,
 		}
 	}()

@@ -1,4 +1,4 @@
-package llm
+package openaicompletions
 
 import (
 	"context"
@@ -8,42 +8,43 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/ktsoator/or/internal/llm"
 	openai "github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/packages/respjson"
 	"github.com/openai/openai-go/v3/shared"
 )
 
-const OpenAICompletionsAPI = "openai-completions"
+const API = "openai-completions"
 
-// OpenAIProvider adapts the OpenAI-compatible Chat Completions API.
-type OpenAIProvider struct {
+// Provider adapts the OpenAI-compatible Chat Completions API.
+type Provider struct {
 	httpClient *http.Client
 }
 
-// NewOpenAIProvider creates a provider that uses httpClient for requests.
+// NewProvider creates a provider that uses httpClient for requests.
 // A nil client uses http.DefaultClient.
-func NewOpenAIProvider(httpClient *http.Client) *OpenAIProvider {
+func NewProvider(httpClient *http.Client) *Provider {
 	if httpClient == nil {
 		httpClient = http.DefaultClient
 	}
 
-	return &OpenAIProvider{httpClient: httpClient}
+	return &Provider{httpClient: httpClient}
 }
 
 // API returns the registry key for the Chat Completions protocol.
-func (p *OpenAIProvider) API() string {
-	return OpenAICompletionsAPI
+func (p *Provider) API() string {
+	return API
 }
 
 // Stream starts a Chat Completions request and translates SDK chunks into
 // package events. It supports text, reasoning, and tool call content.
-func (p *OpenAIProvider) Stream(
+func (p *Provider) Stream(
 	ctx context.Context,
-	model Model,
-	input Context,
-	options StreamOptions,
-) (<-chan Event, error) {
+	model llm.Model,
+	input llm.Context,
+	options llm.StreamOptions,
+) (<-chan llm.Event, error) {
 	if model.API != p.API() {
 		return nil, fmt.Errorf("model API %q does not match provider API %q", model.API, p.API())
 	}
@@ -54,12 +55,12 @@ func (p *OpenAIProvider) Stream(
 		return nil, errors.New("OpenAI API key is empty")
 	}
 
-	messages, err := convertOpenAIMessages(input)
+	messages, err := convertMessages(input)
 	if err != nil {
 		return nil, err
 	}
 
-	tools, err := convertOpenAITools(input.Tools)
+	tools, err := convertTools(input.Tools)
 	if err != nil {
 		return nil, err
 	}
@@ -73,12 +74,12 @@ func (p *OpenAIProvider) Stream(
 	}
 	client := openai.NewClient(clientOptions...)
 
-	events := make(chan Event)
+	events := make(chan llm.Event)
 	go func() {
 		defer close(events)
 
-		output := AssistantMessage{Model: model.ID}
-		events <- Event{Type: EventStart, Partial: cloneAssistantMessage(output)}
+		output := llm.AssistantMessage{Model: model.ID}
+		events <- llm.Event{Type: llm.EventStart, Partial: cloneAssistantMessage(output)}
 
 		params := openai.ChatCompletionNewParams{
 			Model:    model.ID,
@@ -90,7 +91,7 @@ func (p *OpenAIProvider) Stream(
 		stream := client.Chat.Completions.NewStreaming(ctx, params)
 		defer stream.Close()
 
-		toolCallsByIndex := make(map[int64]*ToolCall)
+		toolCallsByIndex := make(map[int64]*llm.ToolCall)
 		finishReason := ""
 		for stream.Next() {
 			chunk := stream.Current()
@@ -99,23 +100,23 @@ func (p *OpenAIProvider) Stream(
 			}
 
 			choice := chunk.Choices[0]
-			reasoningDelta, err := openAIExtraString(choice.Delta.JSON.ExtraFields, "reasoning_content")
+			reasoningDelta, err := extraString(choice.Delta.JSON.ExtraFields, "reasoning_content")
 			if err != nil {
-				emitOpenAIError(events, output, ctx, err)
+				emitError(events, output, ctx, err)
 				return
 			}
 			if reasoningDelta != "" {
 				appendAssistantThinking(&output, reasoningDelta)
-				events <- Event{
-					Type:    EventThinkingDelta,
+				events <- llm.Event{
+					Type:    llm.EventThinkingDelta,
 					Delta:   reasoningDelta,
 					Partial: cloneAssistantMessage(output),
 				}
 			}
 			if choice.Delta.Content != "" {
 				appendAssistantText(&output, choice.Delta.Content)
-				events <- Event{
-					Type:    EventTextDelta,
+				events <- llm.Event{
+					Type:    llm.EventTextDelta,
 					Delta:   choice.Delta.Content,
 					Partial: cloneAssistantMessage(output),
 				}
@@ -125,8 +126,8 @@ func (p *OpenAIProvider) Stream(
 				if toolDelta.Function.Arguments != "" {
 					block.Arguments += toolDelta.Function.Arguments
 				}
-				events <- Event{
-					Type:     EventToolCallDelta,
+				events <- llm.Event{
+					Type:     llm.EventToolCallDelta,
 					Delta:    toolDelta.Function.Arguments,
 					ToolCall: cloneToolCall(block),
 					Partial:  cloneAssistantMessage(output),
@@ -138,32 +139,32 @@ func (p *OpenAIProvider) Stream(
 		}
 
 		if err := stream.Err(); err != nil {
-			emitOpenAIError(events, output, ctx, err)
+			emitError(events, output, ctx, err)
 			return
 		}
 
-		stopReason, err := mapOpenAIStopReason(finishReason)
+		stopReason, err := mapStopReason(finishReason)
 		if err != nil {
-			emitOpenAIError(events, output, ctx, err)
+			emitError(events, output, ctx, err)
 			return
 		}
 		output.StopReason = stopReason
 		for _, content := range output.Content {
-			if content.Type == ContentToolCall && content.ToolCall != nil {
-				events <- Event{
-					Type:     EventToolCallEnd,
+			if content.Type == llm.ContentToolCall && content.ToolCall != nil {
+				events <- llm.Event{
+					Type:     llm.EventToolCallEnd,
 					ToolCall: cloneToolCall(content.ToolCall),
 					Partial:  cloneAssistantMessage(output),
 				}
 			}
 		}
-		events <- Event{Type: EventDone, Message: cloneAssistantMessage(output)}
+		events <- llm.Event{Type: llm.EventDone, Message: cloneAssistantMessage(output)}
 	}()
 
 	return events, nil
 }
 
-func convertOpenAIMessages(input Context) ([]openai.ChatCompletionMessageParamUnion, error) {
+func convertMessages(input llm.Context) ([]openai.ChatCompletionMessageParamUnion, error) {
 	messages := make([]openai.ChatCompletionMessageParamUnion, 0, len(input.Messages)+1)
 	if input.SystemPrompt != "" {
 		messages = append(messages, openai.SystemMessage(input.SystemPrompt))
@@ -171,13 +172,13 @@ func convertOpenAIMessages(input Context) ([]openai.ChatCompletionMessageParamUn
 
 	for _, message := range input.Messages {
 		switch message.Role {
-		case RoleUser:
+		case llm.RoleUser:
 			text, err := messageText(message)
 			if err != nil {
 				return nil, err
 			}
 			messages = append(messages, openai.UserMessage(text))
-		case RoleAssistant:
+		case llm.RoleAssistant:
 			assistant, err := convertAssistantMessage(message)
 			if err != nil {
 				return nil, err
@@ -186,7 +187,7 @@ func convertOpenAIMessages(input Context) ([]openai.ChatCompletionMessageParamUn
 				continue
 			}
 			messages = append(messages, openai.ChatCompletionMessageParamUnion{OfAssistant: assistant})
-		case RoleToolResult:
+		case llm.RoleToolResult:
 			if message.ToolCallID == "" {
 				return nil, errors.New("tool result message is missing tool call ID")
 			}
@@ -207,17 +208,17 @@ func convertOpenAIMessages(input Context) ([]openai.ChatCompletionMessageParamUn
 // calls, into an OpenAI assistant message param. It returns nil for an empty
 // message (no text and no tool calls), which the caller skips: some providers
 // reject assistant messages that carry neither content nor tool calls.
-func convertAssistantMessage(message Message) (*openai.ChatCompletionAssistantMessageParam, error) {
+func convertAssistantMessage(message llm.Message) (*openai.ChatCompletionAssistantMessageParam, error) {
 	assistant := &openai.ChatCompletionAssistantMessageParam{}
 	var text strings.Builder
 	var reasoning strings.Builder
 	for _, content := range message.Content {
 		switch content.Type {
-		case ContentText:
+		case llm.ContentText:
 			text.WriteString(content.Text)
-		case ContentThinking:
+		case llm.ContentThinking:
 			reasoning.WriteString(content.Thinking)
-		case ContentToolCall:
+		case llm.ContentToolCall:
 			if content.ToolCall == nil {
 				return nil, errors.New("assistant tool call content is missing tool call data")
 			}
@@ -251,8 +252,8 @@ func convertAssistantMessage(message Message) (*openai.ChatCompletionAssistantMe
 	return assistant, nil
 }
 
-// convertOpenAITools maps tool definitions to OpenAI function tool params.
-func convertOpenAITools(tools []ToolDefinition) ([]openai.ChatCompletionToolUnionParam, error) {
+// convertTools maps tool definitions to OpenAI function tool params.
+func convertTools(tools []llm.ToolDefinition) ([]openai.ChatCompletionToolUnionParam, error) {
 	if len(tools) == 0 {
 		return nil, nil
 	}
@@ -285,15 +286,15 @@ func convertOpenAITools(tools []ToolDefinition) ([]openai.ChatCompletionToolUnio
 // delta's index, appending a new block to the message content on first sight and
 // backfilling the id and name as they arrive across chunks.
 func ensureAssistantToolCall(
-	message *AssistantMessage,
-	byIndex map[int64]*ToolCall,
+	message *llm.AssistantMessage,
+	byIndex map[int64]*llm.ToolCall,
 	delta openai.ChatCompletionChunkChoiceDeltaToolCall,
-) *ToolCall {
+) *llm.ToolCall {
 	block, ok := byIndex[delta.Index]
 	if !ok {
-		block = &ToolCall{ID: delta.ID, Name: delta.Function.Name}
+		block = &llm.ToolCall{ID: delta.ID, Name: delta.Function.Name}
 		byIndex[delta.Index] = block
-		message.Content = append(message.Content, Content{Type: ContentToolCall, ToolCall: block})
+		message.Content = append(message.Content, llm.Content{Type: llm.ContentToolCall, ToolCall: block})
 	}
 	if block.ID == "" && delta.ID != "" {
 		block.ID = delta.ID
@@ -304,14 +305,14 @@ func ensureAssistantToolCall(
 	return block
 }
 
-func messageText(message Message) (string, error) {
+func messageText(message llm.Message) (string, error) {
 	var text strings.Builder
 	for _, content := range message.Content {
 		switch content.Type {
-		case ContentText:
+		case llm.ContentText:
 			text.WriteString(content.Text)
-		case ContentThinking:
-			if message.Role != RoleAssistant {
+		case llm.ContentThinking:
+			if message.Role != llm.RoleAssistant {
 				return "", fmt.Errorf("thinking content is not valid for role %q", message.Role)
 			}
 		default:
@@ -321,29 +322,29 @@ func messageText(message Message) (string, error) {
 	return text.String(), nil
 }
 
-func appendAssistantText(message *AssistantMessage, delta string) {
+func appendAssistantText(message *llm.AssistantMessage, delta string) {
 	for i := range message.Content {
-		if message.Content[i].Type == ContentText {
+		if message.Content[i].Type == llm.ContentText {
 			message.Content[i].Text += delta
 			return
 		}
 	}
-	message.Content = append(message.Content, Content{Type: ContentText, Text: delta})
+	message.Content = append(message.Content, llm.Content{Type: llm.ContentText, Text: delta})
 }
 
-func appendAssistantThinking(message *AssistantMessage, delta string) {
+func appendAssistantThinking(message *llm.AssistantMessage, delta string) {
 	for i := range message.Content {
-		if message.Content[i].Type == ContentThinking {
+		if message.Content[i].Type == llm.ContentThinking {
 			message.Content[i].Thinking += delta
 			return
 		}
 	}
-	message.Content = append(message.Content, Content{Type: ContentThinking, Thinking: delta})
+	message.Content = append(message.Content, llm.Content{Type: llm.ContentThinking, Thinking: delta})
 }
 
-func cloneAssistantMessage(message AssistantMessage) *AssistantMessage {
+func cloneAssistantMessage(message llm.AssistantMessage) *llm.AssistantMessage {
 	clone := message
-	clone.Content = make([]Content, len(message.Content))
+	clone.Content = make([]llm.Content, len(message.Content))
 	for i, content := range message.Content {
 		clone.Content[i] = content
 		clone.Content[i].ToolCall = cloneToolCall(content.ToolCall)
@@ -351,7 +352,7 @@ func cloneAssistantMessage(message AssistantMessage) *AssistantMessage {
 	return &clone
 }
 
-func cloneToolCall(toolCall *ToolCall) *ToolCall {
+func cloneToolCall(toolCall *llm.ToolCall) *llm.ToolCall {
 	if toolCall == nil {
 		return nil
 	}
@@ -359,17 +360,17 @@ func cloneToolCall(toolCall *ToolCall) *ToolCall {
 	return &clone
 }
 
-func emitOpenAIError(events chan<- Event, output AssistantMessage, ctx context.Context, err error) {
+func emitError(events chan<- llm.Event, output llm.AssistantMessage, ctx context.Context, err error) {
 	if ctx.Err() != nil {
 		output.StopReason = "aborted"
 		err = ctx.Err()
 	} else {
 		output.StopReason = "error"
 	}
-	events <- Event{Type: EventError, Message: cloneAssistantMessage(output), Err: err}
+	events <- llm.Event{Type: llm.EventError, Message: cloneAssistantMessage(output), Err: err}
 }
 
-func openAIExtraString(fields map[string]respjson.Field, name string) (string, error) {
+func extraString(fields map[string]respjson.Field, name string) (string, error) {
 	field, ok := fields[name]
 	if !ok || field.Raw() == "" || field.Raw() == "null" {
 		return "", nil
@@ -382,7 +383,7 @@ func openAIExtraString(fields map[string]respjson.Field, name string) (string, e
 	return value, nil
 }
 
-func mapOpenAIStopReason(reason string) (string, error) {
+func mapStopReason(reason string) (string, error) {
 	switch reason {
 	case "stop":
 		return "stop", nil

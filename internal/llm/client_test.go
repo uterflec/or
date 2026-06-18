@@ -1,34 +1,37 @@
-package llm
+package llm_test
 
 import (
 	"context"
 	"testing"
+
+	"github.com/ktsoator/or/internal/llm"
+	"github.com/ktsoator/or/internal/llm/providers/fake"
 )
 
 func TestClientCompleteWithFakeProvider(t *testing.T) {
-	registry := NewRegistry()
+	registry := llm.NewRegistry()
 
-	provider := NewFakeProvider("hello from fake provider")
+	provider := fake.NewProvider("hello from fake provider")
 	if err := registry.Register(provider); err != nil {
 		t.Fatalf("register provider: %v", err)
 	}
 
-	client := NewClient(registry)
+	client := llm.NewClient(registry)
 
-	model := Model{
+	model := llm.Model{
 		ID:       "fake-1",
 		Name:     "Fake Model",
-		API:      "fake",
+		API:      fake.API,
 		Provider: "fake",
 	}
 
-	input := Context{
-		Messages: []Message{
+	input := llm.Context{
+		Messages: []llm.Message{
 			{
-				Role: RoleUser,
-				Content: []Content{
+				Role: llm.RoleUser,
+				Content: []llm.Content{
 					{
-						Type: ContentText,
+						Type: llm.ContentText,
 						Text: "hello",
 					},
 				},
@@ -40,7 +43,7 @@ func TestClientCompleteWithFakeProvider(t *testing.T) {
 		context.Background(),
 		model,
 		input,
-		StreamOptions{},
+		llm.StreamOptions{},
 	)
 	if err != nil {
 		t.Fatalf("complete: %v", err)

@@ -1,4 +1,4 @@
-package llm
+package openaicompletions
 
 import (
 	"context"
@@ -9,6 +9,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/ktsoator/or/internal/llm"
 )
 
 func TestOpenAIProviderStreamsText(t *testing.T) {
@@ -46,27 +48,27 @@ func TestOpenAIProviderStreamsText(t *testing.T) {
 	}))
 	defer server.Close()
 
-	registry := NewRegistry()
-	if err := registry.Register(NewOpenAIProvider(server.Client())); err != nil {
+	registry := llm.NewRegistry()
+	if err := registry.Register(NewProvider(server.Client())); err != nil {
 		t.Fatalf("register provider: %v", err)
 	}
 
-	events, err := NewClient(registry).Stream(
+	events, err := llm.NewClient(registry).Stream(
 		context.Background(),
-		Model{
+		llm.Model{
 			ID:       "test-model",
-			API:      OpenAICompletionsAPI,
+			API:      API,
 			Provider: "openai",
 			BaseURL:  server.URL + "/v1",
 		},
-		Context{
+		llm.Context{
 			SystemPrompt: "You are helpful.",
-			Messages: []Message{{
-				Role:    RoleUser,
-				Content: []Content{{Type: ContentText, Text: "Say hello."}},
+			Messages: []llm.Message{{
+				Role:    llm.RoleUser,
+				Content: []llm.Content{{Type: llm.ContentText, Text: "Say hello."}},
 			}},
 		},
-		StreamOptions{APIKey: "test-key"},
+		llm.StreamOptions{APIKey: "test-key"},
 	)
 	if err != nil {
 		t.Fatalf("stream: %v", err)
@@ -74,16 +76,16 @@ func TestOpenAIProviderStreamsText(t *testing.T) {
 
 	var deltas string
 	var thinkingDeltas string
-	var message *AssistantMessage
+	var message *llm.AssistantMessage
 	for event := range events {
 		switch event.Type {
-		case EventTextDelta:
+		case llm.EventTextDelta:
 			deltas += event.Delta
-		case EventThinkingDelta:
+		case llm.EventThinkingDelta:
 			thinkingDeltas += event.Delta
-		case EventDone:
+		case llm.EventDone:
 			message = event.Message
-		case EventError:
+		case llm.EventError:
 			t.Fatalf("stream error: %v", event.Err)
 		}
 	}
@@ -167,44 +169,44 @@ func TestOpenAIProviderStreamsToolCall(t *testing.T) {
 	}))
 	defer server.Close()
 
-	provider := NewOpenAIProvider(server.Client())
+	provider := NewProvider(server.Client())
 	events, err := provider.Stream(
 		context.Background(),
-		Model{ID: "test-model", API: OpenAICompletionsAPI, Provider: "openai", BaseURL: server.URL + "/v1"},
-		Context{
-			Tools: []ToolDefinition{{
+		llm.Model{ID: "test-model", API: API, Provider: "openai", BaseURL: server.URL + "/v1"},
+		llm.Context{
+			Tools: []llm.ToolDefinition{{
 				Name:        "get_weather",
 				Description: "Get the weather for a city",
 				Parameters:  json.RawMessage(`{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}`),
 			}},
-			Messages: []Message{
-				{Role: RoleUser, Content: []Content{{Type: ContentText, Text: "Weather in Paris?"}}},
-				{Role: RoleAssistant, Content: []Content{
-					{Type: ContentThinking, Thinking: "I should call get_weather."},
-					{Type: ContentToolCall, ToolCall: &ToolCall{
+			Messages: []llm.Message{
+				{Role: llm.RoleUser, Content: []llm.Content{{Type: llm.ContentText, Text: "Weather in Paris?"}}},
+				{Role: llm.RoleAssistant, Content: []llm.Content{
+					{Type: llm.ContentThinking, Thinking: "I should call get_weather."},
+					{Type: llm.ContentToolCall, ToolCall: &llm.ToolCall{
 						ID: "call_1", Name: "get_weather", Arguments: `{"city":"Paris"}`,
 					}},
 				}},
-				{Role: RoleToolResult, ToolCallID: "call_1", ToolName: "get_weather", Content: []Content{
-					{Type: ContentText, Text: "Sunny, 20C"},
+				{Role: llm.RoleToolResult, ToolCallID: "call_1", ToolName: "get_weather", Content: []llm.Content{
+					{Type: llm.ContentText, Text: "Sunny, 20C"},
 				}},
 			},
 		},
-		StreamOptions{APIKey: "test-key"},
+		llm.StreamOptions{APIKey: "test-key"},
 	)
 	if err != nil {
 		t.Fatalf("stream: %v", err)
 	}
 
-	var ended *ToolCall
-	var message *AssistantMessage
+	var ended *llm.ToolCall
+	var message *llm.AssistantMessage
 	for event := range events {
 		switch event.Type {
-		case EventToolCallEnd:
+		case llm.EventToolCallEnd:
 			ended = event.ToolCall
-		case EventDone:
+		case llm.EventDone:
 			message = event.Message
-		case EventError:
+		case llm.EventError:
 			t.Fatalf("stream error: %v", event.Err)
 		}
 	}
@@ -221,7 +223,7 @@ func TestOpenAIProviderStreamsToolCall(t *testing.T) {
 	if message.StopReason != "toolUse" {
 		t.Fatalf("unexpected stop reason: %q", message.StopReason)
 	}
-	if len(message.Content) != 1 || message.Content[0].Type != ContentToolCall || message.Content[0].ToolCall == nil {
+	if len(message.Content) != 1 || message.Content[0].Type != llm.ContentToolCall || message.Content[0].ToolCall == nil {
 		t.Fatalf("unexpected response content: %#v", message.Content)
 	}
 	if call := message.Content[0].ToolCall; call.ID != "call_2" || call.Arguments != `{"city":"Paris"}` {
@@ -240,16 +242,16 @@ func TestOpenAIProviderCancellation(t *testing.T) {
 	}))
 	defer server.Close()
 
-	provider := NewOpenAIProvider(server.Client())
+	provider := NewProvider(server.Client())
 	ctx, cancel := context.WithCancel(context.Background())
 	events, err := provider.Stream(
 		ctx,
-		Model{ID: "test-model", API: OpenAICompletionsAPI, BaseURL: server.URL + "/v1"},
-		Context{Messages: []Message{{
-			Role:    RoleUser,
-			Content: []Content{{Type: ContentText, Text: "Wait."}},
+		llm.Model{ID: "test-model", API: API, BaseURL: server.URL + "/v1"},
+		llm.Context{Messages: []llm.Message{{
+			Role:    llm.RoleUser,
+			Content: []llm.Content{{Type: llm.ContentText, Text: "Wait."}},
 		}}},
-		StreamOptions{APIKey: "test-key"},
+		llm.StreamOptions{APIKey: "test-key"},
 	)
 	if err != nil {
 		t.Fatalf("stream: %v", err)
@@ -257,7 +259,7 @@ func TestOpenAIProviderCancellation(t *testing.T) {
 
 	select {
 	case event := <-events:
-		if event.Type != EventStart {
+		if event.Type != llm.EventStart {
 			t.Fatalf("expected start event, got %q", event.Type)
 		}
 	case <-time.After(time.Second):
@@ -267,7 +269,7 @@ func TestOpenAIProviderCancellation(t *testing.T) {
 
 	select {
 	case event := <-events:
-		if event.Type != EventError {
+		if event.Type != llm.EventError {
 			t.Fatalf("expected error event, got %q", event.Type)
 		}
 		if !errors.Is(event.Err, context.Canceled) {
