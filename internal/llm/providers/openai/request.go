@@ -16,6 +16,9 @@ func buildClient(httpClient *http.Client, model llm.Model, options llm.StreamOpt
 	clientOptions := []option.RequestOption{
 		option.WithAPIKey(options.APIKey),
 		option.WithHTTPClient(httpClient),
+		// Drop non-compliant SSE keep-alive heartbeats so providers like Xiaomi
+		// MiMo do not break the SDK decoder while the model is thinking.
+		option.WithMiddleware(sseHeartbeatFilter),
 	}
 	if model.BaseURL != "" {
 		clientOptions = append(clientOptions, option.WithBaseURL(model.BaseURL))
