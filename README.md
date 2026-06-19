@@ -1,6 +1,126 @@
 # or
 Choose the path from intent to action.
 
+## Setup
+
+Create a Go application and install the library plus the `.env` loader used by
+the examples:
+
+```sh
+mkdir myapp
+cd myapp
+go mod init myapp
+go get github.com/ktsoator/or/llm
+go get github.com/joho/godotenv
+```
+
+Create a `.env` file in the application directory. Keep the keys for the
+providers you use and remove the rest:
+
+```dotenv
+# China and global providers
+DEEPSEEK_API_KEY=your-deepseek-api-key
+MINIMAX_API_KEY=your-minimax-global-api-key
+MINIMAX_CN_API_KEY=your-minimax-cn-api-key
+XIAOMI_API_KEY=your-xiaomi-mimo-api-key
+ZAI_API_KEY=your-zai-global-api-key
+ZAI_CODING_CN_API_KEY=your-zhipu-coding-cn-api-key
+MOONSHOT_API_KEY=your-moonshot-api-key
+KIMI_API_KEY=your-kimi-coding-api-key
+
+# Additional catalog providers (not individually verified)
+ANTHROPIC_API_KEY=your-anthropic-api-key
+GROQ_API_KEY=your-groq-api-key
+XAI_API_KEY=your-xai-api-key
+OPENROUTER_API_KEY=your-openrouter-api-key
+CEREBRAS_API_KEY=your-cerebras-api-key
+FIREWORKS_API_KEY=your-fireworks-api-key
+```
+
+Xiaomi also accepts `MIMO_API_KEY` as an alternative to `XIAOMI_API_KEY`.
+Only the key for the provider selected by `llm.GetModel` is read.
+
+Add `.env` to the application's `.gitignore` so the key is never committed:
+
+```gitignore
+.env
+```
+
+Copy one of the complete examples below into `main.go`, then run:
+
+```sh
+go mod tidy
+go run .
+```
+
+In production, inject the selected provider's API key as a process environment
+variable instead of using a `.env` file.
+
+## Providers and models
+
+The library currently implements two protocol adapters:
+
+- `openai-completions`
+- `anthropic-messages`
+
+The catalog and compatibility layer explicitly configure these providers:
+
+| Provider | Provider ID | Protocol | Environment variable |
+|---|---|---|---|
+| DeepSeek | `deepseek` | `openai-completions` | `DEEPSEEK_API_KEY` |
+| MiniMax Global | `minimax` | `anthropic-messages` | `MINIMAX_API_KEY` |
+| MiniMax China | `minimax-cn` | `anthropic-messages` | `MINIMAX_CN_API_KEY` |
+| Xiaomi MiMo | `xiaomi` | `openai-completions` | `XIAOMI_API_KEY` or `MIMO_API_KEY` |
+| Z.AI Global | `zai` | `openai-completions` | `ZAI_API_KEY` |
+| Zhipu Coding Plan China | `zai-coding-cn` | `openai-completions` | `ZAI_CODING_CN_API_KEY` |
+| Moonshot AI Global | `moonshotai` | `openai-completions` | `MOONSHOT_API_KEY` |
+| Moonshot AI China | `moonshotai-cn` | `openai-completions` | `MOONSHOT_API_KEY` |
+| Kimi Coding | `kimi-coding` | `anthropic-messages` | `KIMI_API_KEY` |
+
+The catalog also contains metadata for additional compatible providers and
+models. Those entries can be queried and may work through one of the two
+protocol adapters, but they have not all been verified against live provider
+APIs and are not a support guarantee.
+
+Automated tests exercise both protocol adapters with local mock servers. They do
+not currently run live integration tests against every provider listed above.
+
+Query the catalog instead of hard-coding model IDs supplied by users:
+
+<details>
+<summary>Complete model discovery example</summary>
+
+```go
+package main
+
+import (
+	"fmt"
+	"log"
+
+	"github.com/ktsoator/or/llm"
+)
+
+func main() {
+	for _, provider := range llm.GetProviders() {
+		fmt.Println(provider)
+		for _, model := range llm.GetModels(provider) {
+			fmt.Printf("  %s: %s\n", model.ID, model.Name)
+		}
+	}
+
+	model, ok := llm.LookupModel("xiaomi", "mimo-v2-flash")
+	if !ok {
+		log.Fatal("model not found")
+	}
+	fmt.Printf("selected %s/%s via %s\n", model.Provider, model.ID, model.Protocol)
+}
+```
+
+</details>
+
+Use `LookupModel` for dynamic input. `GetModel` is convenient for known catalog
+entries and panics when the provider or model ID does not exist.
+
 ## Quick start
 
 The `llm` package includes the built-in OpenAI-compatible and Anthropic protocol
@@ -14,11 +134,14 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/joho/godotenv"
 	"github.com/ktsoator/or/llm"
 )
 
 func main() {
-	model := llm.GetModel("deepseek", "deepseek-chat")
+	_ = godotenv.Load()
+
+	model := llm.GetModel("deepseek", "deepseek-v4-flash")
 	response, err := llm.Complete(
 		context.Background(),
 		model,
@@ -45,11 +168,12 @@ Set the provider API key in the environment, for example
 `DEEPSEEK_API_KEY`. Use `llm.NewClient` when an isolated built-in client is
 needed.
 
-## Typed tools
+## Streaming
 
-Generate a provider-compatible JSON Schema from a Go struct instead of writing
-tool parameters by hand. The same type is used to validate, coerce, and decode
-the tool call returned by the model:
+Use `Stream` to process text as it is generated:
+
+<details>
+<summary>Complete streaming example</summary>
 
 ```go
 package main
@@ -59,6 +183,114 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/joho/godotenv"
+	"github.com/ktsoator/or/llm"
+)
+
+func main() {
+	_ = godotenv.Load()
+
+	model := llm.GetModel("deepseek", "deepseek-v4-flash")
+	events, err := llm.Stream(
+		context.Background(),
+		model,
+		llm.Context{Messages: []llm.Message{
+			&llm.UserMessage{Content: []llm.UserContent{
+				&llm.TextContent{Text: "Explain Go channels briefly."},
+			}},
+		}},
+		llm.StreamOptions{Reasoning: llm.ModelThinkingHigh},
+	)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	thinkingStarted := false
+	answerStarted := false
+	var finalMessage *llm.AssistantMessage
+	for event := range events {
+		switch event.Type {
+		case llm.EventThinkingDelta:
+			if !thinkingStarted {
+				fmt.Println("[thinking]")
+				thinkingStarted = true
+			}
+			fmt.Print(event.Delta)
+		case llm.EventTextDelta:
+			if !answerStarted {
+				if thinkingStarted {
+					fmt.Print("\n\n")
+				}
+				fmt.Println("[answer]")
+				answerStarted = true
+			}
+			fmt.Print(event.Delta)
+		case llm.EventDone:
+			finalMessage = event.Message
+		case llm.EventError:
+			log.Fatal(event.Err)
+		}
+	}
+	if finalMessage == nil {
+		log.Fatal("stream closed without a final message")
+	}
+	fmt.Printf(
+		"\nstop=%s tokens=%d cost=$%.6f\n",
+		finalMessage.StopReason,
+		finalMessage.Usage.TotalTokens,
+		finalMessage.Usage.Cost.Total,
+	)
+}
+```
+
+</details>
+
+Thinking events are emitted only when the selected model and provider expose
+reasoning content.
+
+### Stream event reference
+
+| Event | Meaning | Main fields |
+|---|---|---|
+| `EventStart` | The provider stream started | `Partial` |
+| `EventTextStart` | A text block started | `ContentIndex`, `Partial` |
+| `EventTextDelta` | A text fragment arrived | `ContentIndex`, `Delta`, `Partial` |
+| `EventTextEnd` | A text block completed | `ContentIndex`, `Content`, `Partial` |
+| `EventThinkingStart` | A reasoning block started | `ContentIndex`, `Partial` |
+| `EventThinkingDelta` | A reasoning fragment arrived | `ContentIndex`, `Delta`, `Partial` |
+| `EventThinkingEnd` | A reasoning block completed | `ContentIndex`, `Content`, `Partial` |
+| `EventToolCallStart` | A tool call block started | `ContentIndex`, `ToolCall`, `Partial` |
+| `EventToolCallDelta` | A raw tool-argument JSON fragment arrived | `ContentIndex`, `Delta`, `ToolCall`, `Partial` |
+| `EventToolCallEnd` | A tool call completed | `ContentIndex`, `ToolCall`, `Partial` |
+| `EventDone` | The request completed successfully | `Message` |
+| `EventError` | The request failed or was cancelled | `Err`, `Message` |
+
+`EventDone.Message` is the final assistant message and contains content, usage,
+cost, and stop reason. `EventError.Message` may contain partial content and usage.
+The channel emits exactly one terminal event and then closes.
+
+Events from different content blocks may be interleaved. Use `ContentIndex` to
+associate deltas with their block. `EventToolCallDelta.Delta` is raw partial
+JSON; only execute or validate the completed `EventToolCallEnd.ToolCall`.
+
+## Typed tools
+
+Generate a provider-compatible JSON Schema from a Go struct instead of writing
+tool parameters by hand. The same type is used to validate, coerce, and decode
+the tool call returned by the model:
+
+<details>
+<summary>Complete typed tool example</summary>
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+
+	"github.com/joho/godotenv"
 	"github.com/ktsoator/or/llm"
 )
 
@@ -69,8 +301,10 @@ type WeatherArgs struct {
 }
 
 func main() {
+	_ = godotenv.Load()
+
 	ctx := context.Background()
-	model := llm.GetModel("deepseek", "deepseek-chat")
+	model := llm.GetModel("deepseek", "deepseek-v4-flash")
 	weatherTool := llm.MustTool[WeatherArgs](
 		"get_weather",
 		"Get a weather forecast",
@@ -145,5 +379,13 @@ func getWeather(arguments WeatherArgs) string {
 }
 ```
 
+</details>
+
 Fields without `omitempty` are required. The generated schema is fully inline
 and omits document metadata such as `$schema`, `$id`, `$ref`, and `$defs`.
+
+## Acknowledgements
+
+This project is inspired by and partially adapted from
+[earendil-works/pi](https://github.com/earendil-works/pi),
+created by Mario Zechner.
