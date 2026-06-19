@@ -19,16 +19,12 @@ type (
 	ModelThinkingLevel             = core.ModelThinkingLevel
 	UserContent                    = core.UserContent
 	AssistantContent               = core.AssistantContent
-	ToolResultContent              = core.ToolResultContent
 	TextContent                    = core.TextContent
 	ThinkingContent                = core.ThinkingContent
 	ImageContent                   = core.ImageContent
-	ToolCall                       = core.ToolCall
 	Message                        = core.Message
 	UserMessage                    = core.UserMessage
 	AssistantMessage               = core.AssistantMessage
-	ToolResultMessage              = core.ToolResultMessage
-	ToolDefinition                 = core.ToolDefinition
 	Context                        = core.Context
 	ModelCost                      = core.ModelCost
 	ModelCompatibility             = core.ModelCompatibility
@@ -44,7 +40,6 @@ type (
 	EventType                      = core.EventType
 	Event                          = core.Event
 	Diagnostic                     = core.Diagnostic
-	ArgumentsMode                  = core.ArgumentsMode
 )
 
 const (
@@ -79,13 +74,6 @@ const (
 	EventToolCallEnd   = core.EventToolCallEnd
 	EventDone          = core.EventDone
 	EventError         = core.EventError
-
-	ArgumentsStrict   = core.ArgumentsStrict
-	ArgumentsRepaired = core.ArgumentsRepaired
-	ArgumentsPartial  = core.ArgumentsPartial
-	ArgumentsInvalid  = core.ArgumentsInvalid
-
-	DiagnosticToolArgumentsRecovered = core.DiagnosticToolArgumentsRecovered
 )
 
 var defaultClient = NewClient()
@@ -145,35 +133,9 @@ func CalculateCost(model Model, usage Usage) UsageCost {
 	return core.CalculateCost(model, usage)
 }
 
-// ValidateToolCall validates and coerces a tool call against its definition.
-func ValidateToolCall(tools []ToolDefinition, toolCall ToolCall) (map[string]any, error) {
-	return core.ValidateToolCall(tools, toolCall)
-}
-
-// ValidateToolArguments validates and coerces one tool call against tool.
-func ValidateToolArguments(tool ToolDefinition, toolCall ToolCall) (map[string]any, error) {
-	return core.ValidateToolArguments(tool, toolCall)
-}
-
 // TransformMessages prepares history for replay against model.
 func TransformMessages(messages []Message, model Model, normalizeToolCallID func(string) string) []Message {
 	return core.TransformMessages(messages, model, normalizeToolCallID)
-}
-
-// ParseToolArguments parses streamed tool argument JSON on a best-effort basis,
-// repairing malformed string escapes and closing truncated input. It always
-// returns a non-nil map, falling back to an empty object when nothing can be
-// salvaged, so a recoverable but invalid tool call never aborts the stream.
-// Enforce correctness separately with ValidateToolArguments before dispatching.
-func ParseToolArguments(raw string) map[string]any {
-	return core.ParseToolArguments(raw)
-}
-
-// ParseToolArgumentsMode is ParseToolArguments with the recovery mode it used,
-// so a caller can decline to execute a tool whose arguments were not strictly
-// parsed (ArgumentsPartial or ArgumentsInvalid).
-func ParseToolArgumentsMode(raw string) (map[string]any, ArgumentsMode) {
-	return core.ParseToolArgumentsMode(raw)
 }
 
 // IsContextOverflow reports whether a response indicates a context overflow.
