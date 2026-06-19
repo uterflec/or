@@ -200,7 +200,7 @@ func (state *streamState) finish(events chan<- llm.Event) error {
 				Partial:      cloneAssistantMessage(state.output),
 			}
 		case *llm.ToolCall:
-			content.Arguments = parseToolArguments(state.toolArgumentJSON[content])
+			content.Arguments = llm.ParseToolArguments(state.toolArgumentJSON[content])
 			events <- llm.Event{
 				Type:         llm.EventToolCallEnd,
 				ContentIndex: contentIndex,
@@ -334,20 +334,6 @@ func cloneToolCall(toolCall *llm.ToolCall) *llm.ToolCall {
 	clone := *toolCall
 	clone.Arguments = cloneJSONObject(toolCall.Arguments)
 	return &clone
-}
-
-// parseToolArguments converts completed streamed JSON into the public argument
-// object. OpenAI function arguments should be an object; malformed or incomplete
-// JSON follows pi's tolerant behavior and becomes an empty object.
-func parseToolArguments(raw string) map[string]any {
-	if raw == "" {
-		return make(map[string]any)
-	}
-	var arguments map[string]any
-	if err := json.Unmarshal([]byte(raw), &arguments); err != nil || arguments == nil {
-		return make(map[string]any)
-	}
-	return arguments
 }
 
 func cloneJSONObject(value map[string]any) map[string]any {

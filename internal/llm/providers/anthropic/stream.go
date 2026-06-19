@@ -2,7 +2,6 @@ package anthropic
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -123,7 +122,7 @@ func (state *streamState) startBlock(ev sdk.ContentBlockStartEvent, events chan<
 		block = &llm.ThinkingContent{Thinking: "[Reasoning redacted]", ThinkingSignature: cb.Data, Redacted: true}
 		eventType = llm.EventThinkingStart
 	case sdk.ToolUseBlock:
-		block = &llm.ToolCall{ID: cb.ID, Name: cb.Name, Arguments: parseToolArguments(string(cb.Input))}
+		block = &llm.ToolCall{ID: cb.ID, Name: cb.Name, Arguments: llm.ParseToolArguments(string(cb.Input))}
 		state.toolJSON[ev.Index] = ""
 		eventType = llm.EventToolCallStart
 	default:
@@ -211,7 +210,7 @@ func (state *streamState) stopBlock(ev sdk.ContentBlockStopEvent, events chan<- 
 			Partial:      cloneAssistantMessage(state.output),
 		}
 	case *llm.ToolCall:
-		content.Arguments = parseToolArguments(state.toolJSON[ev.Index])
+		content.Arguments = llm.ParseToolArguments(state.toolJSON[ev.Index])
 		events <- llm.Event{
 			Type:         llm.EventToolCallEnd,
 			ContentIndex: contentIndex,
@@ -268,19 +267,6 @@ func emitError(events chan<- llm.Event, output llm.AssistantMessage, ctx context
 	}
 	output.ErrorMessage = err.Error()
 	events <- llm.Event{Type: llm.EventError, Message: cloneAssistantMessage(output), Err: err}
-}
-
-// parseToolArguments converts streamed tool JSON into the public argument object.
-// Malformed or incomplete JSON yields an empty object, matching pi's tolerance.
-func parseToolArguments(raw string) map[string]any {
-	if raw == "" {
-		return make(map[string]any)
-	}
-	var arguments map[string]any
-	if err := json.Unmarshal([]byte(raw), &arguments); err != nil || arguments == nil {
-		return make(map[string]any)
-	}
-	return arguments
 }
 
 func cloneAssistantMessage(message llm.AssistantMessage) *llm.AssistantMessage {
