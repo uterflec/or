@@ -114,10 +114,26 @@ func buildClient(httpClient *http.Client, model llm.Model, options llm.StreamOpt
 	if options.Timeout > 0 {
 		clientOptions = append(clientOptions, option.WithRequestTimeout(options.Timeout))
 	}
+	if options.OnResponse != nil {
+		clientOptions = append(clientOptions, option.WithMiddleware(onResponseMiddleware(options.OnResponse)))
+	}
 	for name, value := range mergedHeaders(model, options) {
 		clientOptions = append(clientOptions, option.WithHeader(name, value))
 	}
 	return sdk.NewClient(clientOptions...)
+}
+
+// onResponseMiddleware reports each HTTP response's status and headers to hook
+// before the body is consumed. The SDK re-runs middleware on every retry, so the
+// hook observes each attempt.
+func onResponseMiddleware(hook func(int, http.Header)) option.Middleware {
+	return func(req *http.Request, next option.MiddlewareNext) (*http.Response, error) {
+		resp, err := next(req)
+		if resp != nil {
+			hook(resp.StatusCode, resp.Header)
+		}
+		return resp, err
+	}
 }
 
 func mergedHeaders(model llm.Model, options llm.StreamOptions) map[string]string {

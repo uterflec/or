@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"errors"
+	"net/http"
 	"sync"
 	"time"
 )
@@ -32,6 +33,10 @@ type StreamOptions struct {
 	// default. It is independent of the request context, which still cancels the
 	// whole call.
 	Timeout time.Duration
+	// OnResponse, when set, is called with the status and headers of every HTTP
+	// response before its body is consumed. It fires once per attempt, so a
+	// retried request invokes it for each try, making retries observable.
+	OnResponse func(status int, headers http.Header)
 }
 
 // ProtocolAdapter translates between a concrete LLM protocol and the package streaming interface.
