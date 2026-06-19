@@ -16,6 +16,7 @@ type resolvedCompat struct {
 	supportsReasoningEffort                     bool
 	maxTokensField                              string
 	requiresReasoningContentOnAssistantMessages bool
+	requiresThinkingAsText                      bool
 	thinkingFormat                              string
 	zaiToolStream                               bool
 	supportsStrictMode                          bool
@@ -44,6 +45,9 @@ func resolveCompat(model llm.Model) resolvedCompat {
 	}
 	if override.RequiresReasoningContentOnAssistantMessages != nil {
 		compat.requiresReasoningContentOnAssistantMessages = *override.RequiresReasoningContentOnAssistantMessages
+	}
+	if override.RequiresThinkingAsText != nil {
+		compat.requiresThinkingAsText = *override.RequiresThinkingAsText
 	}
 	if override.ThinkingFormat != "" {
 		compat.thinkingFormat = override.ThinkingFormat

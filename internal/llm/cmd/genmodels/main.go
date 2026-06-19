@@ -80,6 +80,7 @@ type compatibility struct {
 	MaxTokensField                              string `json:"maxTokensField,omitempty"`
 	SupportsStrictMode                          *bool  `json:"supportsStrictMode,omitempty"`
 	RequiresReasoningContentOnAssistantMessages *bool  `json:"requiresReasoningContentOnAssistantMessages,omitempty"`
+	RequiresThinkingAsText                      *bool  `json:"requiresThinkingAsText,omitempty"`
 	ThinkingFormat                              string `json:"thinkingFormat,omitempty"`
 	ZAIToolStream                               *bool  `json:"zaiToolStream,omitempty"`
 	SupportsTemperature                         *bool  `json:"supportsTemperature,omitempty"`

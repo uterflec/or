@@ -224,7 +224,7 @@ func convertAssistantMessage(
 ) (*oai.ChatCompletionAssistantMessageParam, error) {
 	assistant := &oai.ChatCompletionAssistantMessageParam{}
 	var text strings.Builder
-	var reasoning strings.Builder
+	var thinkingParts []string
 	reasoningSig := ""
 	for _, rawContent := range message.Content {
 		switch content := rawContent.(type) {
@@ -242,13 +242,10 @@ func convertAssistantMessage(
 			if strings.TrimSpace(content.Thinking) == "" {
 				continue
 			}
-			if reasoning.Len() > 0 {
-				reasoning.WriteString("\n")
-			}
 			if reasoningSig == "" {
 				reasoningSig = content.ThinkingSignature
 			}
-			reasoning.WriteString(content.Thinking)
+			thinkingParts = append(thinkingParts, content.Thinking)
 		case *llm.ToolCall:
 			if content == nil {
 				return nil, errors.New("assistant tool call content is missing tool call data")
@@ -272,17 +269,33 @@ func convertAssistantMessage(
 	}
 
 	hasText := false
-	if value := text.String(); value != "" {
-		assistant.Content.OfString = oai.String(value)
-		hasText = true
-	}
 	extras := map[string]any{}
-	// Replay reasoning only when its source field is known: a provider rejects
-	// reasoning sent under a field it does not expect, so unsigned reasoning is
-	// dropped rather than guessed.
-	if field := reasoningSignature(model, reasoningSig); field != "" {
-		if reasoningValue := reasoning.String(); reasoningValue != "" {
-			extras[field] = reasoningValue
+	if compat.requiresThinkingAsText && len(thinkingParts) > 0 {
+		// Some endpoints reject a reasoning field on input and instead expect the
+		// thinking to appear inline as a leading text block. Render it that way
+		// and skip the reasoning-field replay below.
+		parts := []oai.ChatCompletionAssistantMessageParamContentArrayOfContentPartUnion{
+			{OfText: &oai.ChatCompletionContentPartTextParam{Text: strings.Join(thinkingParts, "\n\n")}},
+		}
+		if value := text.String(); value != "" {
+			parts = append(parts, oai.ChatCompletionAssistantMessageParamContentArrayOfContentPartUnion{
+				OfText: &oai.ChatCompletionContentPartTextParam{Text: value},
+			})
+		}
+		assistant.Content.OfArrayOfContentParts = parts
+		hasText = true
+	} else {
+		if value := text.String(); value != "" {
+			assistant.Content.OfString = oai.String(value)
+			hasText = true
+		}
+		// Replay reasoning only when its source field is known: a provider rejects
+		// reasoning sent under a field it does not expect, so unsigned reasoning is
+		// dropped rather than guessed.
+		if field := reasoningSignature(model, reasoningSig); field != "" {
+			if reasoningValue := strings.Join(thinkingParts, "\n"); reasoningValue != "" {
+				extras[field] = reasoningValue
+			}
 		}
 	}
 	// Some providers require every replayed assistant message to carry

@@ -141,8 +141,12 @@ type OpenAICompletionsCompatibility struct {
 	MaxTokensField                              string `json:"maxTokensField,omitempty"`
 	SupportsStrictMode                          *bool  `json:"supportsStrictMode,omitempty"`
 	RequiresReasoningContentOnAssistantMessages *bool  `json:"requiresReasoningContentOnAssistantMessages,omitempty"`
-	ThinkingFormat                              string `json:"thinkingFormat,omitempty"`
-	ZAIToolStream                               *bool  `json:"zaiToolStream,omitempty"`
+	// RequiresThinkingAsText makes replayed assistant turns carry thinking as a
+	// leading text content block instead of a provider reasoning field, for
+	// endpoints that reject reasoning fields on input.
+	RequiresThinkingAsText *bool  `json:"requiresThinkingAsText,omitempty"`
+	ThinkingFormat         string `json:"thinkingFormat,omitempty"`
+	ZAIToolStream          *bool  `json:"zaiToolStream,omitempty"`
 }
 
 // Protocol identifies the API protocol whose request and message dialect this
