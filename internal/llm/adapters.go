@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 )
 
 // ProviderEnv contains request-scoped environment overrides. Non-empty values
@@ -23,6 +24,14 @@ type StreamOptions struct {
 	// Reasoning requests a thinking level. The provider clamps it to what the
 	// model supports. Empty leaves the model's default; "off" disables thinking.
 	Reasoning ModelThinkingLevel
+	// MaxRetries overrides the SDK client-side retry count for transient failures
+	// (HTTP 429 and 5xx, connection errors). Nil leaves the SDK default; a value
+	// of 0 disables retries so the caller can manage them.
+	MaxRetries *int
+	// Timeout caps the total duration of one HTTP attempt. Zero leaves the SDK
+	// default. It is independent of the request context, which still cancels the
+	// whole call.
+	Timeout time.Duration
 }
 
 // ProtocolAdapter translates between a concrete LLM protocol and the package streaming interface.

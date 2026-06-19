@@ -23,6 +23,12 @@ func buildClient(httpClient *http.Client, model llm.Model, options llm.StreamOpt
 	if model.BaseURL != "" {
 		clientOptions = append(clientOptions, option.WithBaseURL(model.BaseURL))
 	}
+	if options.MaxRetries != nil {
+		clientOptions = append(clientOptions, option.WithMaxRetries(*options.MaxRetries))
+	}
+	if options.Timeout > 0 {
+		clientOptions = append(clientOptions, option.WithRequestTimeout(options.Timeout))
+	}
 	for name, value := range mergedHeaders(model, options) {
 		clientOptions = append(clientOptions, option.WithHeader(name, value))
 	}
