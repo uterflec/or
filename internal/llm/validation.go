@@ -1,0 +1,452 @@
+package llm
+
+import (
+	"encoding/json"
+	"fmt"
+	"math"
+	"reflect"
+	"strconv"
+	"strings"
+)
+
+// ValidateToolCall finds the tool named by the call and validates its arguments.
+// It mirrors pi's helper: a utility callers may invoke before dispatching a tool,
+// not something the library calls itself. It returns the coerced arguments.
+func ValidateToolCall(tools []ToolDefinition, toolCall ToolCall) (map[string]any, error) {
+	for _, tool := range tools {
+		if tool.Name == toolCall.Name {
+			return ValidateToolArguments(tool, toolCall)
+		}
+	}
+	return nil, fmt.Errorf("tool %q not found", toolCall.Name)
+}
+
+// ValidateToolArguments coerces a tool call's arguments toward the tool's JSON
+// Schema (forgiving common model mistakes such as "3" for a number), then
+// validates them. It returns the coerced arguments, or a detailed error naming
+// the failing fields. The original toolCall.Arguments are left unchanged.
+//
+// The coercion mirrors pi's coerceWithJsonSchema. The validation is a minimal
+// JSON Schema checker (type, required, properties, items, enum); pi delegates
+// the equivalent check to TypeBox.
+func ValidateToolArguments(tool ToolDefinition, toolCall ToolCall) (map[string]any, error) {
+	schema := parseSchema(tool.Parameters)
+	if schema == nil {
+		// No schema to validate against; return arguments unchanged.
+		return toolCall.Arguments, nil
+	}
+
+	coerced := coerceWithJSONSchema(deepCopyJSON(toolCall.Arguments), schema)
+	arguments, _ := coerced.(map[string]any)
+	if arguments == nil {
+		arguments = map[string]any{}
+	}
+
+	if problems := validateValue(coerced, schema, ""); len(problems) > 0 {
+		received, _ := json.MarshalIndent(toolCall.Arguments, "", "  ")
+		return nil, fmt.Errorf(
+			"validation failed for tool %q:\n%s\n\nReceived arguments:\n%s",
+			toolCall.Name,
+			strings.Join(problems, "\n"),
+			received,
+		)
+	}
+	return arguments, nil
+}
+
+func parseSchema(raw json.RawMessage) map[string]any {
+	if len(raw) == 0 {
+		return nil
+	}
+	var schema map[string]any
+	if err := json.Unmarshal(raw, &schema); err != nil || schema == nil {
+		return nil
+	}
+	return schema
+}
+
+// schemaTypes returns the declared JSON types of a schema. "type" may be a
+// single string or an array of strings.
+func schemaTypes(schema map[string]any) []string {
+	switch typed := schema["type"].(type) {
+	case string:
+		return []string{typed}
+	case []any:
+		types := make([]string, 0, len(typed))
+		for _, value := range typed {
+			if name, ok := value.(string); ok {
+				types = append(types, name)
+			}
+		}
+		return types
+	}
+	return nil
+}
+
+// matchesJSONType reports whether value already satisfies a JSON type. JSON
+// numbers decode to float64, so integers are float64 with no fractional part.
+func matchesJSONType(value any, jsonType string) bool {
+	switch jsonType {
+	case "number":
+		_, ok := value.(float64)
+		return ok
+	case "integer":
+		number, ok := value.(float64)
+		return ok && number == math.Trunc(number)
+	case "boolean":
+		_, ok := value.(bool)
+		return ok
+	case "string":
+		_, ok := value.(string)
+		return ok
+	case "null":
+		return value == nil
+	case "array":
+		_, ok := value.([]any)
+		return ok
+	case "object":
+		_, ok := value.(map[string]any)
+		return ok
+	}
+	return false
+}
+
+// coercePrimitiveByType nudges a primitive toward the requested JSON type,
+// mirroring pi's coercePrimitiveByType. It returns the value unchanged when no
+// safe conversion applies.
+func coercePrimitiveByType(value any, jsonType string) any {
+	switch jsonType {
+	case "number":
+		if value == nil {
+			return float64(0)
+		}
+		if text, ok := value.(string); ok && strings.TrimSpace(text) != "" {
+			if parsed, err := strconv.ParseFloat(text, 64); err == nil {
+				return parsed
+			}
+		}
+		if flag, ok := value.(bool); ok {
+			return boolToFloat(flag)
+		}
+		return value
+	case "integer":
+		if value == nil {
+			return float64(0)
+		}
+		if text, ok := value.(string); ok && strings.TrimSpace(text) != "" {
+			if parsed, err := strconv.ParseFloat(text, 64); err == nil && parsed == math.Trunc(parsed) {
+				return parsed
+			}
+		}
+		if flag, ok := value.(bool); ok {
+			return boolToFloat(flag)
+		}
+		return value
+	case "boolean":
+		if value == nil {
+			return false
+		}
+		if text, ok := value.(string); ok {
+			if text == "true" {
+				return true
+			}
+			if text == "false" {
+				return false
+			}
+		}
+		if number, ok := value.(float64); ok {
+			if number == 1 {
+				return true
+			}
+			if number == 0 {
+				return false
+			}
+		}
+		return value
+	case "string":
+		if value == nil {
+			return ""
+		}
+		switch typed := value.(type) {
+		case float64:
+			return strconv.FormatFloat(typed, 'f', -1, 64)
+		case bool:
+			return strconv.FormatBool(typed)
+		}
+		return value
+	case "null":
+		if value == "" || value == float64(0) || value == false {
+			return nil
+		}
+		return value
+	}
+	return value
+}
+
+func boolToFloat(flag bool) float64 {
+	if flag {
+		return 1
+	}
+	return 0
+}
+
+// coerceWithJSONSchema recursively coerces a value toward a schema, mirroring
+// pi's function of the same name: apply allOf/anyOf/oneOf, then primitive type
+// coercion, then descend into object properties and array items.
+func coerceWithJSONSchema(value any, schema map[string]any) any {
+	next := value
+
+	for _, nested := range schemaList(schema["allOf"]) {
+		next = coerceWithJSONSchema(next, nested)
+	}
+	if union := schemaList(schema["anyOf"]); len(union) > 0 {
+		next = coerceWithUnionSchema(next, union)
+	}
+	if union := schemaList(schema["oneOf"]); len(union) > 0 {
+		next = coerceWithUnionSchema(next, union)
+	}
+
+	types := schemaTypes(schema)
+	matchesUnionMember := false
+	if len(types) > 1 {
+		for _, jsonType := range types {
+			if matchesJSONType(next, jsonType) {
+				matchesUnionMember = true
+				break
+			}
+		}
+	}
+	// Primitive coercion only applies to scalars; composites (maps, slices) are
+	// never changed by coercePrimitiveByType, and comparing them with != would
+	// panic on the uncomparable map type.
+	if len(types) > 0 && !matchesUnionMember && !isComposite(next) {
+		for _, jsonType := range types {
+			candidate := coercePrimitiveByType(next, jsonType)
+			if candidate != next {
+				next = candidate
+				break
+			}
+		}
+	}
+
+	if containsString(types, "object") {
+		if object, ok := next.(map[string]any); ok {
+			applySchemaObjectCoercion(object, schema)
+		}
+	}
+	if containsString(types, "array") {
+		if array, ok := next.([]any); ok {
+			applySchemaArrayCoercion(array, schema)
+		}
+	}
+
+	return next
+}
+
+func applySchemaObjectCoercion(value map[string]any, schema map[string]any) {
+	properties := schemaMap(schema["properties"])
+	for key, propertySchema := range properties {
+		if _, present := value[key]; !present {
+			continue
+		}
+		value[key] = coerceWithJSONSchema(value[key], propertySchema)
+	}
+
+	if additional, ok := schema["additionalProperties"].(map[string]any); ok {
+		for key, propertyValue := range value {
+			if _, defined := properties[key]; defined {
+				continue
+			}
+			value[key] = coerceWithJSONSchema(propertyValue, additional)
+		}
+	}
+}
+
+func applySchemaArrayCoercion(value []any, schema map[string]any) {
+	switch items := schema["items"].(type) {
+	case []any:
+		for index := range value {
+			if index >= len(items) {
+				continue
+			}
+			if itemSchema, ok := items[index].(map[string]any); ok {
+				value[index] = coerceWithJSONSchema(value[index], itemSchema)
+			}
+		}
+	case map[string]any:
+		for index := range value {
+			value[index] = coerceWithJSONSchema(value[index], items)
+		}
+	}
+}
+
+// coerceWithUnionSchema tries each branch and returns the first coerced value
+// that validates, falling back to the original value when none do.
+func coerceWithUnionSchema(value any, schemas []map[string]any) any {
+	for _, schema := range schemas {
+		candidate := coerceWithJSONSchema(deepCopyJSON(value), schema)
+		if len(validateValue(candidate, schema, "")) == 0 {
+			return candidate
+		}
+	}
+	return value
+}
+
+// validateValue checks a value against a schema and returns one message per
+// problem. It covers type, required, properties, items, and enum.
+func validateValue(value any, schema map[string]any, path string) []string {
+	var problems []string
+
+	types := schemaTypes(schema)
+	if len(types) > 0 {
+		matched := false
+		for _, jsonType := range types {
+			if matchesJSONType(value, jsonType) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			problems = append(problems, formatProblem(path, fmt.Sprintf("expected %s", strings.Join(types, " or "))))
+			// Type mismatch makes deeper checks meaningless.
+			return problems
+		}
+	}
+
+	if enum, ok := schema["enum"].([]any); ok && len(enum) > 0 {
+		if !containsValue(enum, value) {
+			problems = append(problems, formatProblem(path, "value is not one of the allowed options"))
+		}
+	}
+
+	if object, ok := value.(map[string]any); ok {
+		for _, required := range stringList(schema["required"]) {
+			if _, present := object[required]; !present {
+				problems = append(problems, formatProblem(joinPath(path, required), "required property missing"))
+			}
+		}
+		for key, propertySchema := range schemaMap(schema["properties"]) {
+			if propertyValue, present := object[key]; present {
+				problems = append(problems, validateValue(propertyValue, propertySchema, joinPath(path, key))...)
+			}
+		}
+	}
+
+	if array, ok := value.([]any); ok {
+		if itemSchema, ok := schema["items"].(map[string]any); ok {
+			for index, item := range array {
+				problems = append(problems, validateValue(item, itemSchema, fmt.Sprintf("%s[%d]", path, index))...)
+			}
+		}
+	}
+
+	return problems
+}
+
+func formatProblem(path, message string) string {
+	if path == "" {
+		path = "root"
+	}
+	return fmt.Sprintf("  - %s: %s", path, message)
+}
+
+func joinPath(base, key string) string {
+	if base == "" {
+		return key
+	}
+	return base + "." + key
+}
+
+// schemaList interprets a schema keyword whose value is an array of schemas
+// (allOf/anyOf/oneOf).
+func schemaList(value any) []map[string]any {
+	raw, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+	schemas := make([]map[string]any, 0, len(raw))
+	for _, entry := range raw {
+		if schema, ok := entry.(map[string]any); ok {
+			schemas = append(schemas, schema)
+		}
+	}
+	return schemas
+}
+
+// schemaMap interprets a keyword whose value maps names to sub-schemas
+// (properties).
+func schemaMap(value any) map[string]map[string]any {
+	raw, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+	result := make(map[string]map[string]any, len(raw))
+	for key, entry := range raw {
+		if schema, ok := entry.(map[string]any); ok {
+			result[key] = schema
+		}
+	}
+	return result
+}
+
+func stringList(value any) []string {
+	raw, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+	result := make([]string, 0, len(raw))
+	for _, entry := range raw {
+		if name, ok := entry.(string); ok {
+			result = append(result, name)
+		}
+	}
+	return result
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if value == target {
+			return true
+		}
+	}
+	return false
+}
+
+func containsValue(values []any, target any) bool {
+	for _, value := range values {
+		if reflect.DeepEqual(value, target) {
+			return true
+		}
+	}
+	return false
+}
+
+func isComposite(value any) bool {
+	switch value.(type) {
+	case map[string]any, []any:
+		return true
+	}
+	return false
+}
+
+// deepCopyJSON clones a value composed of the types produced by json.Unmarshal
+// (map[string]any, []any, and scalars) so coercion never mutates the caller's
+// arguments.
+func deepCopyJSON(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		clone := make(map[string]any, len(typed))
+		for key, item := range typed {
+			clone[key] = deepCopyJSON(item)
+		}
+		return clone
+	case []any:
+		clone := make([]any, len(typed))
+		for index, item := range typed {
+			clone[index] = deepCopyJSON(item)
+		}
+		return clone
+	default:
+		return value
+	}
+}
