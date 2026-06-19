@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -99,24 +98,37 @@ func TestStreamCancellationEmitsOneAbortedTerminalEvent(t *testing.T) {
 	}
 }
 
-func TestStreamMalformedToolArgumentsEmitsError(t *testing.T) {
+// A tool call whose argument JSON is truncated does not fail the stream: the
+// response completes with the salvaged (here empty) arguments alongside any
+// other content, leaving validation and recovery to the caller.
+func TestStreamMalformedToolArgumentsDegradesToBestEffort(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
 		anthropicSSE(w, "message_start", `{"type":"message_start","message":{"id":"msg_bad","type":"message","role":"assistant","content":[],"model":"test-model","stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":1,"output_tokens":0}}}`)
-		anthropicSSE(w, "content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_bad","name":"weather","input":{}}}`)
-		anthropicSSE(w, "content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"city\":"}}`)
+		anthropicSSE(w, "content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`)
+		anthropicSSE(w, "content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial answer"}}`)
 		anthropicSSE(w, "content_block_stop", `{"type":"content_block_stop","index":0}`)
+		anthropicSSE(w, "content_block_start", `{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_bad","name":"weather","input":{}}}`)
+		anthropicSSE(w, "content_block_delta", `{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"city\":"}}`)
+		anthropicSSE(w, "content_block_stop", `{"type":"content_block_stop","index":1}`)
+		anthropicSSE(w, "message_delta", `{"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null},"usage":{"output_tokens":2}}`)
+		anthropicSSE(w, "message_stop", `{"type":"message_stop"}`)
 	}))
 	defer server.Close()
 
 	events := streamAnthropicTest(t, context.Background(), server.URL)
-	assertAnthropicSingleTerminal(t, events, llm.EventError)
-	terminal := events[len(events)-1]
-	if terminal.Err == nil || !strings.Contains(terminal.Err.Error(), "parse arguments for tool call") {
-		t.Fatalf("terminal error = %v", terminal.Err)
+	assertAnthropicSingleTerminal(t, events, llm.EventDone)
+	message := events[len(events)-1].Message
+	if message == nil || message.StopReason != llm.StopReasonToolUse {
+		t.Fatalf("terminal message = %#v", message)
 	}
-	if terminal.Message == nil || terminal.Message.StopReason != llm.StopReasonError {
-		t.Fatalf("terminal message = %#v", terminal.Message)
+	text, ok := message.Content[0].(*llm.TextContent)
+	if !ok || text.Text != "partial answer" {
+		t.Fatalf("partial content = %#v", message.Content)
+	}
+	call, ok := message.Content[1].(*llm.ToolCall)
+	if !ok || call.Name != "weather" || len(call.Arguments) != 0 {
+		t.Fatalf("tool call = %#v", message.Content[1])
 	}
 }
 

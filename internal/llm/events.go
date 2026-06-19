@@ -22,7 +22,10 @@ const (
 	EventToolCallStart EventType = "toolcall_start"
 	// EventToolCallDelta carries a fragment of a tool call's arguments as it streams.
 	EventToolCallDelta EventType = "toolcall_delta"
-	// EventToolCallEnd carries a completed tool call request.
+	// EventToolCallEnd carries a tool call whose arguments finished streaming.
+	// Malformed or truncated argument JSON is parsed best-effort, so callers
+	// should validate the arguments and wait for EventDone before executing the
+	// call, because a later content block may still fail the overall response.
 	EventToolCallEnd EventType = "toolcall_end"
 	// EventDone carries the final assistant message.
 	EventDone EventType = "done"

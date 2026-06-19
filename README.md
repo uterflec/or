@@ -261,7 +261,7 @@ reasoning content.
 | `EventThinkingEnd` | A reasoning block completed | `ContentIndex`, `Content`, `Partial` |
 | `EventToolCallStart` | A tool call block started | `ContentIndex`, `ToolCall`, `Partial` |
 | `EventToolCallDelta` | A raw tool-argument JSON fragment arrived | `ContentIndex`, `Delta`, `ToolCall`, `Partial` |
-| `EventToolCallEnd` | A tool call completed | `ContentIndex`, `ToolCall`, `Partial` |
+| `EventToolCallEnd` | A tool call finished streaming, arguments parsed best-effort | `ContentIndex`, `ToolCall`, `Partial` |
 | `EventDone` | The request completed successfully | `Message` |
 | `EventError` | The request failed or was cancelled | `Err`, `Message` |
 
@@ -271,7 +271,12 @@ The channel emits exactly one terminal event and then closes.
 
 Events from different content blocks may be interleaved. Use `ContentIndex` to
 associate deltas with their block. `EventToolCallDelta.Delta` is raw partial
-JSON; only execute or validate the completed `EventToolCallEnd.ToolCall`.
+JSON. `EventToolCallEnd` carries the call with its arguments parsed best-effort:
+malformed or truncated JSON degrades to the fields received so far, or to an
+empty object, so validate arguments before use. Collect tool calls while
+streaming and execute them only after `EventDone`. On `EventError`, treat
+`EventError.Message` as partial content for display, logging, or retry only; do
+not execute any tool calls from that response.
 
 ## Typed tools
 

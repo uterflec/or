@@ -151,8 +151,12 @@ func TransformMessages(messages []Message, model Model, normalizeToolCallID func
 	return core.TransformMessages(messages, model, normalizeToolCallID)
 }
 
-// ParseToolArguments parses and repairs streamed tool argument JSON.
-func ParseToolArguments(raw string) (map[string]any, error) {
+// ParseToolArguments parses streamed tool argument JSON on a best-effort basis,
+// repairing malformed string escapes and closing truncated input. It always
+// returns a non-nil map, falling back to an empty object when nothing can be
+// salvaged, so a recoverable but invalid tool call never aborts the stream.
+// Enforce correctness separately with ValidateToolArguments before dispatching.
+func ParseToolArguments(raw string) map[string]any {
 	return core.ParseToolArguments(raw)
 }
 

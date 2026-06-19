@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -102,9 +101,14 @@ func TestStreamCancellationEmitsOneAbortedTerminalEvent(t *testing.T) {
 	}
 }
 
-func TestStreamMalformedToolArgumentsEmitsError(t *testing.T) {
+// A tool call whose argument JSON is truncated does not fail the stream: the
+// response completes with the salvaged (here empty) arguments alongside any
+// other content, leaving validation and recovery to the caller.
+func TestStreamMalformedToolArgumentsDegradesToBestEffort(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprintln(w, `data: {"id":"chatcmpl_bad","object":"chat.completion.chunk","model":"test-model","choices":[{"index":0,"delta":{"content":"partial answer"},"finish_reason":null}]}`)
+		fmt.Fprintln(w)
 		fmt.Fprintln(w, `data: {"id":"chatcmpl_bad","object":"chat.completion.chunk","model":"test-model","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_bad","type":"function","function":{"name":"weather","arguments":"{\"city\":"}}]},"finish_reason":null}]}`)
 		fmt.Fprintln(w)
 		fmt.Fprintln(w, `data: {"id":"chatcmpl_bad","object":"chat.completion.chunk","model":"test-model","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`)
@@ -115,13 +119,18 @@ func TestStreamMalformedToolArgumentsEmitsError(t *testing.T) {
 	defer server.Close()
 
 	events := streamOpenAITest(t, server.URL+"/v1")
-	assertSingleTerminalEvent(t, events, llm.EventError)
-	terminal := events[len(events)-1]
-	if terminal.Err == nil || !strings.Contains(terminal.Err.Error(), "parse arguments for tool call") {
-		t.Fatalf("terminal error = %v", terminal.Err)
+	assertSingleTerminalEvent(t, events, llm.EventDone)
+	message := events[len(events)-1].Message
+	if message == nil || message.StopReason != llm.StopReasonToolUse {
+		t.Fatalf("terminal message = %#v", message)
 	}
-	if terminal.Message == nil || terminal.Message.StopReason != llm.StopReasonError {
-		t.Fatalf("terminal message = %#v", terminal.Message)
+	text, ok := message.Content[0].(*llm.TextContent)
+	if !ok || text.Text != "partial answer" {
+		t.Fatalf("partial content = %#v", message.Content)
+	}
+	call, ok := message.Content[1].(*llm.ToolCall)
+	if !ok || call.Name != "weather" || len(call.Arguments) != 0 {
+		t.Fatalf("tool call = %#v", message.Content[1])
 	}
 }
 

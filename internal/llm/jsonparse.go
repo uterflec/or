@@ -14,38 +14,61 @@ var validJSONEscapes = map[byte]bool{
 }
 
 // ParseToolArguments decodes a tool call's accumulated JSON arguments into an
-// object. Models occasionally emit JSON with unescaped control characters or
-// bad escape sequences; a strict decode of that input loses every argument. So
-// this first tries a strict decode, then retries on a repaired copy, and only
-// then reports the parse error. Empty input represents a tool call with no
-// arguments and returns an empty object.
-func ParseToolArguments(raw string) (map[string]any, error) {
+// object on a best-effort basis. Models occasionally emit JSON with unescaped
+// control characters or bad escapes, and a stream may be cut off mid-token, so a
+// strict decode of that input would lose every argument. This therefore tries,
+// in order: a strict decode, a decode of a repaired copy, a partial decode that
+// closes any open containers and strings, and a partial decode of the repaired
+// copy. It always returns a non-nil map, falling back to an empty object when
+// nothing can be salvaged.
+//
+// Parsing never fails the surrounding stream: a recoverable but invalid tool
+// call surfaces with whatever arguments could be salvaged so an agent can still
+// validate it (see ValidateToolArguments) and let the model self-correct,
+// instead of aborting the whole response.
+func ParseToolArguments(raw string) map[string]any {
 	if strings.TrimSpace(raw) == "" {
-		return map[string]any{}, nil
+		return map[string]any{}
 	}
-	arguments, strictErr := decodeJSONObject(raw)
-	if strictErr == nil {
-		return arguments, nil
+	if arguments, ok := decodeJSONObject(raw); ok {
+		return arguments
 	}
-	if repaired := RepairJSON(raw); repaired != raw {
-		arguments, repairedErr := decodeJSONObject(repaired)
-		if repairedErr == nil {
-			return arguments, nil
+	repaired := RepairJSON(raw)
+	if repaired != raw {
+		if arguments, ok := decodeJSONObject(repaired); ok {
+			return arguments
 		}
-		return nil, fmt.Errorf("parse repaired tool arguments: %w", repairedErr)
 	}
-	return nil, fmt.Errorf("parse tool arguments: %w", strictErr)
+	// Streamed arguments may be truncated mid-token; close the open structures
+	// and decode the prefix received so far, on the raw then the repaired copy.
+	if arguments, ok := parsePartialJSONObject(raw); ok {
+		return arguments
+	}
+	if repaired != raw {
+		if arguments, ok := parsePartialJSONObject(repaired); ok {
+			return arguments
+		}
+	}
+	return map[string]any{}
 }
 
-func decodeJSONObject(raw string) (map[string]any, error) {
+func decodeJSONObject(raw string) (map[string]any, bool) {
 	var arguments map[string]any
-	if err := json.Unmarshal([]byte(raw), &arguments); err != nil {
-		return nil, err
+	if err := json.Unmarshal([]byte(raw), &arguments); err != nil || arguments == nil {
+		return nil, false
 	}
-	if arguments == nil {
-		return nil, fmt.Errorf("tool arguments must be a JSON object")
+	return arguments, true
+}
+
+// parsePartialJSONObject closes the open containers and strings of a truncated
+// JSON document, then decodes the completed text as an object. ok is false when
+// the input cannot be completed into a valid JSON object.
+func parsePartialJSONObject(raw string) (map[string]any, bool) {
+	completed, ok := completeJSON(raw)
+	if !ok {
+		return nil, false
 	}
-	return arguments, nil
+	return decodeJSONObject(completed)
 }
 
 // RepairJSON fixes malformed JSON string literals by escaping raw control
