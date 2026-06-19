@@ -27,29 +27,53 @@ var validJSONEscapes = map[byte]bool{
 // validate it (see ValidateToolArguments) and let the model self-correct,
 // instead of aborting the whole response.
 func ParseToolArguments(raw string) map[string]any {
+	arguments, _ := ParseToolArgumentsMode(raw)
+	return arguments
+}
+
+// ArgumentsMode reports which layer of ParseToolArgumentsMode produced a result,
+// so callers can tell strictly parsed arguments apart from recovered ones.
+type ArgumentsMode string
+
+const (
+	// ArgumentsStrict means empty input or a clean strict decode: fully trusted.
+	ArgumentsStrict ArgumentsMode = "strict"
+	// ArgumentsRepaired means the input decoded only after escape repair.
+	ArgumentsRepaired ArgumentsMode = "repaired"
+	// ArgumentsPartial means truncated input was closed and decoded, so some
+	// fields may be missing or cut short.
+	ArgumentsPartial ArgumentsMode = "partial"
+	// ArgumentsInvalid means nothing could be salvaged and the result is empty.
+	ArgumentsInvalid ArgumentsMode = "invalid"
+)
+
+// ParseToolArgumentsMode is ParseToolArguments with the recovery mode it used.
+// The arguments are identical to ParseToolArguments; the mode lets a caller
+// decline to execute a tool whose arguments were not strictly parsed.
+func ParseToolArgumentsMode(raw string) (map[string]any, ArgumentsMode) {
 	if strings.TrimSpace(raw) == "" {
-		return map[string]any{}
+		return map[string]any{}, ArgumentsStrict
 	}
 	if arguments, ok := decodeJSONObject(raw); ok {
-		return arguments
+		return arguments, ArgumentsStrict
 	}
 	repaired := RepairJSON(raw)
 	if repaired != raw {
 		if arguments, ok := decodeJSONObject(repaired); ok {
-			return arguments
+			return arguments, ArgumentsRepaired
 		}
 	}
 	// Streamed arguments may be truncated mid-token; close the open structures
 	// and decode the prefix received so far, on the raw then the repaired copy.
 	if arguments, ok := parsePartialJSONObject(raw); ok {
-		return arguments
+		return arguments, ArgumentsPartial
 	}
 	if repaired != raw {
 		if arguments, ok := parsePartialJSONObject(repaired); ok {
-			return arguments
+			return arguments, ArgumentsPartial
 		}
 	}
-	return map[string]any{}
+	return map[string]any{}, ArgumentsInvalid
 }
 
 func decodeJSONObject(raw string) (map[string]any, bool) {

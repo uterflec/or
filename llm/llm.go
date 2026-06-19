@@ -43,6 +43,8 @@ type (
 	Client                         = core.Client
 	EventType                      = core.EventType
 	Event                          = core.Event
+	Diagnostic                     = core.Diagnostic
+	ArgumentsMode                  = core.ArgumentsMode
 )
 
 const (
@@ -77,6 +79,13 @@ const (
 	EventToolCallEnd   = core.EventToolCallEnd
 	EventDone          = core.EventDone
 	EventError         = core.EventError
+
+	ArgumentsStrict   = core.ArgumentsStrict
+	ArgumentsRepaired = core.ArgumentsRepaired
+	ArgumentsPartial  = core.ArgumentsPartial
+	ArgumentsInvalid  = core.ArgumentsInvalid
+
+	DiagnosticToolArgumentsRecovered = core.DiagnosticToolArgumentsRecovered
 )
 
 var defaultClient = NewClient()
@@ -158,6 +167,13 @@ func TransformMessages(messages []Message, model Model, normalizeToolCallID func
 // Enforce correctness separately with ValidateToolArguments before dispatching.
 func ParseToolArguments(raw string) map[string]any {
 	return core.ParseToolArguments(raw)
+}
+
+// ParseToolArgumentsMode is ParseToolArguments with the recovery mode it used,
+// so a caller can decline to execute a tool whose arguments were not strictly
+// parsed (ArgumentsPartial or ArgumentsInvalid).
+func ParseToolArgumentsMode(raw string) (map[string]any, ArgumentsMode) {
+	return core.ParseToolArgumentsMode(raw)
 }
 
 // IsContextOverflow reports whether a response indicates a context overflow.

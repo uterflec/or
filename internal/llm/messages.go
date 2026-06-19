@@ -68,6 +68,7 @@ type assistantMessageWire struct {
 	Usage         Usage             `json:"usage"`
 	StopReason    StopReason        `json:"stopReason"`
 	ErrorMessage  string            `json:"errorMessage,omitempty"`
+	Diagnostics   []Diagnostic      `json:"diagnostics,omitempty"`
 	Timestamp     int64             `json:"timestamp"`
 }
 
@@ -167,6 +168,7 @@ func (message AssistantMessage) MarshalJSON() ([]byte, error) {
 		Usage:         message.Usage,
 		StopReason:    message.StopReason,
 		ErrorMessage:  message.ErrorMessage,
+		Diagnostics:   message.Diagnostics,
 		Timestamp:     message.Timestamp,
 	})
 }
@@ -196,6 +198,7 @@ func (message *AssistantMessage) UnmarshalJSON(data []byte) error {
 		Usage:         wire.Usage,
 		StopReason:    wire.StopReason,
 		ErrorMessage:  wire.ErrorMessage,
+		Diagnostics:   wire.Diagnostics,
 		Timestamp:     wire.Timestamp,
 	}
 	return nil

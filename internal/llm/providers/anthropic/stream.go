@@ -226,7 +226,11 @@ func (state *streamState) stopBlock(ev sdk.ContentBlockStopEvent, events chan<- 
 		// Anthropic-compatible providers send the full input on content_block_start
 		// with no deltas; overwriting with the empty buffer would drop it.
 		if raw := state.toolJSON[ev.Index]; raw != "" {
-			content.Arguments = llm.ParseToolArguments(raw)
+			arguments, mode := llm.ParseToolArgumentsMode(raw)
+			content.Arguments = arguments
+			if diagnostic, ok := llm.ToolArgumentsDiagnostic(content.ID, content.Name, mode); ok {
+				state.output.Diagnostics = append(state.output.Diagnostics, diagnostic)
+			}
 		}
 		events <- llm.Event{
 			Type:         llm.EventToolCallEnd,
@@ -304,6 +308,9 @@ func cloneAssistantMessage(message llm.AssistantMessage) *llm.AssistantMessage {
 		case *llm.ToolCall:
 			clone.Content[i] = cloneToolCall(content)
 		}
+	}
+	if len(message.Diagnostics) > 0 {
+		clone.Diagnostics = append([]llm.Diagnostic(nil), message.Diagnostics...)
 	}
 	return &clone
 }

@@ -52,6 +52,44 @@ func TestParseToolArgumentsDegradesToEmptyObject(t *testing.T) {
 	}
 }
 
+func TestParseToolArgumentsMode(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want ArgumentsMode
+	}{
+		{name: "empty is strict", raw: "", want: ArgumentsStrict},
+		{name: "valid is strict", raw: `{"city":"Paris"}`, want: ArgumentsStrict},
+		{name: "control char is repaired", raw: "{\"city\":\"Par\nis\"}", want: ArgumentsRepaired},
+		{name: "truncated is partial", raw: `{"city":"Par`, want: ArgumentsPartial},
+		{name: "garbage is invalid", raw: `not json at all`, want: ArgumentsInvalid},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if _, mode := ParseToolArgumentsMode(test.raw); mode != test.want {
+				t.Fatalf("mode = %q, want %q", mode, test.want)
+			}
+		})
+	}
+}
+
+func TestToolArgumentsDiagnostic(t *testing.T) {
+	if _, ok := ToolArgumentsDiagnostic("id", "name", ArgumentsStrict); ok {
+		t.Fatal("strict parse should not produce a diagnostic")
+	}
+	diagnostic, ok := ToolArgumentsDiagnostic("toolu_1", "weather", ArgumentsPartial)
+	if !ok {
+		t.Fatal("partial parse should produce a diagnostic")
+	}
+	if diagnostic.Type != DiagnosticToolArgumentsRecovered {
+		t.Fatalf("diagnostic type = %q", diagnostic.Type)
+	}
+	if diagnostic.Details["mode"] != "partial" || diagnostic.Details["toolCallId"] != "toolu_1" {
+		t.Fatalf("diagnostic details = %#v", diagnostic.Details)
+	}
+}
+
 func TestCompleteJSON(t *testing.T) {
 	tests := []struct {
 		name string

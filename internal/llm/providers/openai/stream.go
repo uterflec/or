@@ -200,7 +200,11 @@ func (state *streamState) finish(events chan<- llm.Event) error {
 				Partial:      cloneAssistantMessage(state.output),
 			}
 		case *llm.ToolCall:
-			content.Arguments = llm.ParseToolArguments(state.toolArgumentJSON[content])
+			arguments, mode := llm.ParseToolArgumentsMode(state.toolArgumentJSON[content])
+			content.Arguments = arguments
+			if diagnostic, ok := llm.ToolArgumentsDiagnostic(content.ID, content.Name, mode); ok {
+				state.output.Diagnostics = append(state.output.Diagnostics, diagnostic)
+			}
 			events <- llm.Event{
 				Type:         llm.EventToolCallEnd,
 				ContentIndex: contentIndex,
@@ -323,6 +327,9 @@ func cloneAssistantMessage(message llm.AssistantMessage) *llm.AssistantMessage {
 		case *llm.ToolCall:
 			clone.Content[i] = cloneToolCall(content)
 		}
+	}
+	if len(message.Diagnostics) > 0 {
+		clone.Diagnostics = append([]llm.Diagnostic(nil), message.Diagnostics...)
 	}
 	return &clone
 }

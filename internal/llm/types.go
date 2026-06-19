@@ -289,7 +289,11 @@ type AssistantMessage struct {
 	Usage         Usage              `json:"usage"`
 	StopReason    StopReason         `json:"stopReason"`
 	ErrorMessage  string             `json:"errorMessage,omitempty"`
-	Timestamp     int64              `json:"timestamp"`
+	// Diagnostics records non-fatal events (failures recovered from, degraded
+	// results) that occurred while producing this response. It is nil for a
+	// clean response.
+	Diagnostics []Diagnostic `json:"diagnostics,omitempty"`
+	Timestamp   int64        `json:"timestamp"`
 }
 
 func (*AssistantMessage) isMessage() {}

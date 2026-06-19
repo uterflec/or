@@ -130,6 +130,11 @@ func TestStreamMalformedToolArgumentsDegradesToBestEffort(t *testing.T) {
 	if !ok || call.Name != "weather" || len(call.Arguments) != 0 {
 		t.Fatalf("tool call = %#v", message.Content[1])
 	}
+	if len(message.Diagnostics) != 1 ||
+		message.Diagnostics[0].Type != llm.DiagnosticToolArgumentsRecovered ||
+		message.Diagnostics[0].Details["mode"] != string(llm.ArgumentsPartial) {
+		t.Fatalf("diagnostics = %#v", message.Diagnostics)
+	}
 }
 
 // A provider that sends the full tool input on content_block_start with no

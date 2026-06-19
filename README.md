@@ -278,6 +278,12 @@ streaming and execute them only after `EventDone`. On `EventError`, treat
 `EventError.Message` as partial content for display, logging, or retry only; do
 not execute any tool calls from that response.
 
+When a tool call's arguments could not be parsed strictly, the response records
+a `tool_arguments_recovered` entry in `Message.Diagnostics` with the recovery
+`mode` (`repaired`, `partial`, or `invalid`). Inspect `Diagnostics` before
+executing a tool with side effects, and decline `partial` or `invalid`
+arguments — return them to the model as a tool error so it can retry.
+
 ## Typed tools
 
 Generate a provider-compatible JSON Schema from a Go struct instead of writing
