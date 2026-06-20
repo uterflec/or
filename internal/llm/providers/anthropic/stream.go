@@ -47,54 +47,50 @@ func consumeStream(
 	defer close(events)
 
 	state := newStreamState(model)
+	writer := llm.NewStreamWriter(ctx, events, &state.output)
 	// A panic in the SDK or event handling must surface as a terminal error event
 	// rather than crashing the host process.
 	defer func() {
 		if r := recover(); r != nil {
-			emitError(events, state.output, ctx, fmt.Errorf("anthropic stream panicked: %v", r))
+			writer.Fail(fmt.Errorf("anthropic stream panicked: %v", r))
 		}
 	}()
 	stream := client.Messages.NewStreaming(ctx, params)
 	defer stream.Close()
 
-	started := false
 	for stream.Next() {
-		if !started {
-			started = true
-			events <- llm.Event{Type: llm.EventStart, Partial: cloneAssistantMessage(state.output)}
-		}
-		state.processEvent(stream.Current(), events)
+		writer.Start()
+		state.processEvent(stream.Current(), writer)
 	}
 
 	if err := stream.Err(); err != nil {
-		emitError(events, state.output, ctx, err)
+		writer.Fail(err)
 		return
 	}
 	if state.output.StopReason == llm.StopReasonError {
-		message := cloneAssistantMessage(state.output)
-		events <- llm.Event{Type: llm.EventError, Message: message, Err: errors.New(state.output.ErrorMessage)}
+		writer.Fail(errors.New(state.output.ErrorMessage))
 		return
 	}
 	if !state.sawStop {
-		emitError(events, state.output, ctx, errors.New("Anthropic stream ended without a stop reason"))
+		writer.Fail(errors.New("Anthropic stream ended without a stop reason"))
 		return
 	}
 
-	events <- llm.Event{Type: llm.EventDone, Message: cloneAssistantMessage(state.output)}
+	writer.Done()
 }
 
-func (state *streamState) processEvent(event sdk.MessageStreamEventUnion, events chan<- llm.Event) {
+func (state *streamState) processEvent(event sdk.MessageStreamEventUnion, writer *llm.StreamWriter) {
 	switch ev := event.AsAny().(type) {
 	case sdk.MessageStartEvent:
 		state.output.ResponseID = ev.Message.ID
 		usage := ev.Message.Usage
 		state.setUsage(usage.InputTokens, usage.OutputTokens, usage.CacheReadInputTokens, usage.CacheCreationInputTokens)
 	case sdk.ContentBlockStartEvent:
-		state.startBlock(ev, events)
+		state.startBlock(ev, writer)
 	case sdk.ContentBlockDeltaEvent:
-		state.deltaBlock(ev, events)
+		state.deltaBlock(ev, writer)
 	case sdk.ContentBlockStopEvent:
-		state.stopBlock(ev, events)
+		state.stopBlock(ev, writer)
 	case sdk.MessageStopEvent:
 		state.sawStop = true
 	case sdk.MessageDeltaEvent:
@@ -127,7 +123,7 @@ func (state *streamState) processEvent(event sdk.MessageStreamEventUnion, events
 	}
 }
 
-func (state *streamState) startBlock(ev sdk.ContentBlockStartEvent, events chan<- llm.Event) {
+func (state *streamState) startBlock(ev sdk.ContentBlockStartEvent, writer *llm.StreamWriter) {
 	var block llm.AssistantContent
 	var eventType llm.EventType
 	switch cb := ev.ContentBlock.AsAny().(type) {
@@ -153,14 +149,14 @@ func (state *streamState) startBlock(ev sdk.ContentBlockStartEvent, events chan<
 	state.byIndex[ev.Index] = block
 	contentIndex := len(state.output.Content) - 1
 
-	event := llm.Event{Type: eventType, ContentIndex: contentIndex, Partial: cloneAssistantMessage(state.output)}
+	event := llm.Event{Type: eventType, ContentIndex: contentIndex}
 	if call, ok := block.(*llm.ToolCall); ok {
-		event.ToolCall = cloneToolCall(call)
+		event.ToolCall = llm.CloneToolCall(call)
 	}
-	events <- event
+	writer.Emit(event)
 }
 
-func (state *streamState) deltaBlock(ev sdk.ContentBlockDeltaEvent, events chan<- llm.Event) {
+func (state *streamState) deltaBlock(ev sdk.ContentBlockDeltaEvent, writer *llm.StreamWriter) {
 	block, ok := state.byIndex[ev.Index]
 	if !ok {
 		return
@@ -171,33 +167,30 @@ func (state *streamState) deltaBlock(ev sdk.ContentBlockDeltaEvent, events chan<
 	case sdk.TextDelta:
 		if content, ok := block.(*llm.TextContent); ok {
 			content.Text += delta.Text
-			events <- llm.Event{
+			writer.Emit(llm.Event{
 				Type:         llm.EventTextDelta,
 				ContentIndex: contentIndex,
 				Delta:        delta.Text,
-				Partial:      cloneAssistantMessage(state.output),
-			}
+			})
 		}
 	case sdk.ThinkingDelta:
 		if content, ok := block.(*llm.ThinkingContent); ok {
 			content.Thinking += delta.Thinking
-			events <- llm.Event{
+			writer.Emit(llm.Event{
 				Type:         llm.EventThinkingDelta,
 				ContentIndex: contentIndex,
 				Delta:        delta.Thinking,
-				Partial:      cloneAssistantMessage(state.output),
-			}
+			})
 		}
 	case sdk.InputJSONDelta:
 		if content, ok := block.(*llm.ToolCall); ok {
 			state.toolJSON[ev.Index] += delta.PartialJSON
-			events <- llm.Event{
+			writer.Emit(llm.Event{
 				Type:         llm.EventToolCallDelta,
 				ContentIndex: contentIndex,
 				Delta:        delta.PartialJSON,
-				ToolCall:     cloneToolCall(content),
-				Partial:      cloneAssistantMessage(state.output),
-			}
+				ToolCall:     llm.CloneToolCall(content),
+			})
 		}
 	case sdk.SignatureDelta:
 		if content, ok := block.(*llm.ThinkingContent); ok {
@@ -206,7 +199,7 @@ func (state *streamState) deltaBlock(ev sdk.ContentBlockDeltaEvent, events chan<
 	}
 }
 
-func (state *streamState) stopBlock(ev sdk.ContentBlockStopEvent, events chan<- llm.Event) {
+func (state *streamState) stopBlock(ev sdk.ContentBlockStopEvent, writer *llm.StreamWriter) {
 	block, ok := state.byIndex[ev.Index]
 	if !ok {
 		return
@@ -215,19 +208,17 @@ func (state *streamState) stopBlock(ev sdk.ContentBlockStopEvent, events chan<- 
 
 	switch content := block.(type) {
 	case *llm.TextContent:
-		events <- llm.Event{
+		writer.Emit(llm.Event{
 			Type:         llm.EventTextEnd,
 			ContentIndex: contentIndex,
 			Content:      content.Text,
-			Partial:      cloneAssistantMessage(state.output),
-		}
+		})
 	case *llm.ThinkingContent:
-		events <- llm.Event{
+		writer.Emit(llm.Event{
 			Type:         llm.EventThinkingEnd,
 			ContentIndex: contentIndex,
 			Content:      content.Thinking,
-			Partial:      cloneAssistantMessage(state.output),
-		}
+		})
 	case *llm.ToolCall:
 		// Reparse only when argument JSON streamed in via deltas. Some
 		// Anthropic-compatible providers send the full input on content_block_start
@@ -239,12 +230,11 @@ func (state *streamState) stopBlock(ev sdk.ContentBlockStopEvent, events chan<- 
 				state.output.Diagnostics = append(state.output.Diagnostics, diagnostic)
 			}
 		}
-		events <- llm.Event{
+		writer.Emit(llm.Event{
 			Type:         llm.EventToolCallEnd,
 			ContentIndex: contentIndex,
-			ToolCall:     cloneToolCall(content),
-			Partial:      cloneAssistantMessage(state.output),
-		}
+			ToolCall:     llm.CloneToolCall(content),
+		})
 	}
 }
 
@@ -284,75 +274,4 @@ func assistantContentIndex(content []llm.AssistantContent, target llm.AssistantC
 		}
 	}
 	return -1
-}
-
-func emitError(events chan<- llm.Event, output llm.AssistantMessage, ctx context.Context, err error) {
-	if ctx.Err() != nil {
-		output.StopReason = llm.StopReasonAborted
-		err = ctx.Err()
-	} else {
-		output.StopReason = llm.StopReasonError
-	}
-	output.ErrorMessage = err.Error()
-	events <- llm.Event{Type: llm.EventError, Message: cloneAssistantMessage(output), Err: err}
-}
-
-func cloneAssistantMessage(message llm.AssistantMessage) *llm.AssistantMessage {
-	clone := message
-	clone.Content = make([]llm.AssistantContent, len(message.Content))
-	for i, rawContent := range message.Content {
-		switch content := rawContent.(type) {
-		case *llm.TextContent:
-			if content != nil {
-				copied := *content
-				clone.Content[i] = &copied
-			}
-		case *llm.ThinkingContent:
-			if content != nil {
-				copied := *content
-				clone.Content[i] = &copied
-			}
-		case *llm.ToolCall:
-			clone.Content[i] = cloneToolCall(content)
-		}
-	}
-	if len(message.Diagnostics) > 0 {
-		clone.Diagnostics = append([]llm.Diagnostic(nil), message.Diagnostics...)
-	}
-	return &clone
-}
-
-func cloneToolCall(toolCall *llm.ToolCall) *llm.ToolCall {
-	if toolCall == nil {
-		return nil
-	}
-	clone := *toolCall
-	clone.Arguments = cloneJSONObject(toolCall.Arguments)
-	return &clone
-}
-
-func cloneJSONObject(value map[string]any) map[string]any {
-	if value == nil {
-		return nil
-	}
-	clone := make(map[string]any, len(value))
-	for key, item := range value {
-		clone[key] = cloneJSONValue(item)
-	}
-	return clone
-}
-
-func cloneJSONValue(value any) any {
-	switch typed := value.(type) {
-	case map[string]any:
-		return cloneJSONObject(typed)
-	case []any:
-		clone := make([]any, len(typed))
-		for index, item := range typed {
-			clone[index] = cloneJSONValue(item)
-		}
-		return clone
-	default:
-		return value
-	}
 }

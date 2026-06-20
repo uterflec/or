@@ -23,7 +23,6 @@ type streamState struct {
 	toolArgumentJSON map[*llm.ToolCall]string
 
 	finishReason string
-	started      bool
 }
 
 func newStreamState(model llm.Model) *streamState {
@@ -48,39 +47,37 @@ func consumeStream(
 	defer close(events)
 
 	state := newStreamState(model)
+	writer := llm.NewStreamWriter(ctx, events, &state.output)
 	// A panic in the SDK or chunk handling must surface as a terminal error event
 	// rather than crashing the host process.
 	defer func() {
 		if r := recover(); r != nil {
-			emitError(events, state.output, ctx, fmt.Errorf("openai stream panicked: %v", r))
+			writer.Fail(fmt.Errorf("openai stream panicked: %v", r))
 		}
 	}()
 	stream := client.Chat.Completions.NewStreaming(ctx, params)
 	defer stream.Close()
 
 	for stream.Next() {
-		if !state.started {
-			state.started = true
-			events <- llm.Event{Type: llm.EventStart, Partial: cloneAssistantMessage(state.output)}
-		}
-		if err := state.processChunk(stream.Current(), events); err != nil {
-			emitError(events, state.output, ctx, err)
+		writer.Start()
+		if err := state.processChunk(stream.Current(), writer); err != nil {
+			writer.Fail(err)
 			return
 		}
 	}
 
 	if err := stream.Err(); err != nil {
-		emitError(events, state.output, ctx, err)
+		writer.Fail(err)
 		return
 	}
-	if err := state.finish(events); err != nil {
-		emitError(events, state.output, ctx, err)
+	if err := state.finish(writer); err != nil {
+		writer.Fail(err)
 	}
 }
 
 // processChunk merges one provider chunk into the partial assistant message and
 // emits the corresponding delta events.
-func (state *streamState) processChunk(chunk oai.ChatCompletionChunk, events chan<- llm.Event) error {
+func (state *streamState) processChunk(chunk oai.ChatCompletionChunk, writer *llm.StreamWriter) error {
 	if state.output.ResponseID == "" {
 		state.output.ResponseID = chunk.ID
 	}
@@ -115,37 +112,33 @@ func (state *streamState) processChunk(chunk oai.ChatCompletionChunk, events cha
 		signature := reasoningSignature(state.model, reasoningField)
 		content, contentIndex, started := ensureAssistantThinking(&state.output, signature)
 		if started {
-			events <- llm.Event{
+			writer.Emit(llm.Event{
 				Type:         llm.EventThinkingStart,
 				ContentIndex: contentIndex,
-				Partial:      cloneAssistantMessage(state.output),
-			}
+			})
 		}
 		content.Thinking += reasoningDelta
-		events <- llm.Event{
+		writer.Emit(llm.Event{
 			Type:         llm.EventThinkingDelta,
 			ContentIndex: contentIndex,
 			Delta:        reasoningDelta,
-			Partial:      cloneAssistantMessage(state.output),
-		}
+		})
 	}
 
 	if choice.Delta.Content != "" {
 		content, contentIndex, started := ensureAssistantText(&state.output)
 		if started {
-			events <- llm.Event{
+			writer.Emit(llm.Event{
 				Type:         llm.EventTextStart,
 				ContentIndex: contentIndex,
-				Partial:      cloneAssistantMessage(state.output),
-			}
+			})
 		}
 		content.Text += choice.Delta.Content
-		events <- llm.Event{
+		writer.Emit(llm.Event{
 			Type:         llm.EventTextDelta,
 			ContentIndex: contentIndex,
 			Delta:        choice.Delta.Content,
-			Partial:      cloneAssistantMessage(state.output),
-		}
+		})
 	}
 
 	for _, toolDelta := range choice.Delta.ToolCalls {
@@ -156,23 +149,21 @@ func (state *streamState) processChunk(chunk oai.ChatCompletionChunk, events cha
 			toolDelta,
 		)
 		if started {
-			events <- llm.Event{
+			writer.Emit(llm.Event{
 				Type:         llm.EventToolCallStart,
 				ContentIndex: contentIndex,
-				ToolCall:     cloneToolCall(block),
-				Partial:      cloneAssistantMessage(state.output),
-			}
+				ToolCall:     llm.CloneToolCall(block),
+			})
 		}
 		if toolDelta.Function.Arguments != "" {
 			state.toolArgumentJSON[block] += toolDelta.Function.Arguments
 		}
-		events <- llm.Event{
+		writer.Emit(llm.Event{
 			Type:         llm.EventToolCallDelta,
 			ContentIndex: contentIndex,
 			Delta:        toolDelta.Function.Arguments,
-			ToolCall:     cloneToolCall(block),
-			Partial:      cloneAssistantMessage(state.output),
-		}
+			ToolCall:     llm.CloneToolCall(block),
+		})
 	}
 
 	if err := applyReasoningDetails(choice.Delta.JSON.ExtraFields, state.toolCallsByID); err != nil {
@@ -187,7 +178,7 @@ func (state *streamState) processChunk(chunk oai.ChatCompletionChunk, events cha
 
 // finish validates the provider finish reason, finalizes tool-call arguments,
 // emits one end event per content block, and then emits the final done event.
-func (state *streamState) finish(events chan<- llm.Event) error {
+func (state *streamState) finish(writer *llm.StreamWriter) error {
 	stopReason, err := mapStopReason(state.finishReason)
 	if err != nil {
 		return err
@@ -197,35 +188,32 @@ func (state *streamState) finish(events chan<- llm.Event) error {
 	for contentIndex, rawContent := range state.output.Content {
 		switch content := rawContent.(type) {
 		case *llm.TextContent:
-			events <- llm.Event{
+			writer.Emit(llm.Event{
 				Type:         llm.EventTextEnd,
 				ContentIndex: contentIndex,
 				Content:      content.Text,
-				Partial:      cloneAssistantMessage(state.output),
-			}
+			})
 		case *llm.ThinkingContent:
-			events <- llm.Event{
+			writer.Emit(llm.Event{
 				Type:         llm.EventThinkingEnd,
 				ContentIndex: contentIndex,
 				Content:      content.Thinking,
-				Partial:      cloneAssistantMessage(state.output),
-			}
+			})
 		case *llm.ToolCall:
 			arguments, mode := llm.ParseToolArgumentsMode(state.toolArgumentJSON[content])
 			content.Arguments = arguments
 			if diagnostic, ok := llm.ToolArgumentsDiagnostic(content.ID, content.Name, mode); ok {
 				state.output.Diagnostics = append(state.output.Diagnostics, diagnostic)
 			}
-			events <- llm.Event{
+			writer.Emit(llm.Event{
 				Type:         llm.EventToolCallEnd,
 				ContentIndex: contentIndex,
-				ToolCall:     cloneToolCall(content),
-				Partial:      cloneAssistantMessage(state.output),
-			}
+				ToolCall:     llm.CloneToolCall(content),
+			})
 		}
 	}
 
-	events <- llm.Event{Type: llm.EventDone, Message: cloneAssistantMessage(state.output)}
+	writer.Done()
 	return nil
 }
 
@@ -318,77 +306,6 @@ func assistantContentIndex(content []llm.AssistantContent, target llm.AssistantC
 		}
 	}
 	return -1
-}
-
-func cloneAssistantMessage(message llm.AssistantMessage) *llm.AssistantMessage {
-	clone := message
-	clone.Content = make([]llm.AssistantContent, len(message.Content))
-	for i, rawContent := range message.Content {
-		switch content := rawContent.(type) {
-		case *llm.TextContent:
-			if content != nil {
-				copied := *content
-				clone.Content[i] = &copied
-			}
-		case *llm.ThinkingContent:
-			if content != nil {
-				copied := *content
-				clone.Content[i] = &copied
-			}
-		case *llm.ToolCall:
-			clone.Content[i] = cloneToolCall(content)
-		}
-	}
-	if len(message.Diagnostics) > 0 {
-		clone.Diagnostics = append([]llm.Diagnostic(nil), message.Diagnostics...)
-	}
-	return &clone
-}
-
-func cloneToolCall(toolCall *llm.ToolCall) *llm.ToolCall {
-	if toolCall == nil {
-		return nil
-	}
-	clone := *toolCall
-	clone.Arguments = cloneJSONObject(toolCall.Arguments)
-	return &clone
-}
-
-func cloneJSONObject(value map[string]any) map[string]any {
-	if value == nil {
-		return nil
-	}
-	clone := make(map[string]any, len(value))
-	for key, item := range value {
-		clone[key] = cloneJSONValue(item)
-	}
-	return clone
-}
-
-func cloneJSONValue(value any) any {
-	switch typed := value.(type) {
-	case map[string]any:
-		return cloneJSONObject(typed)
-	case []any:
-		clone := make([]any, len(typed))
-		for index, item := range typed {
-			clone[index] = cloneJSONValue(item)
-		}
-		return clone
-	default:
-		return value
-	}
-}
-
-func emitError(events chan<- llm.Event, output llm.AssistantMessage, ctx context.Context, err error) {
-	if ctx.Err() != nil {
-		output.StopReason = llm.StopReasonAborted
-		err = ctx.Err()
-	} else {
-		output.StopReason = llm.StopReasonError
-	}
-	output.ErrorMessage = err.Error()
-	events <- llm.Event{Type: llm.EventError, Message: cloneAssistantMessage(output), Err: err}
 }
 
 func usageFrom(usage oai.CompletionUsage, model llm.Model) llm.Usage {
