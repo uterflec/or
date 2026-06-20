@@ -2,6 +2,7 @@ package llm_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -86,11 +87,25 @@ func TestGetModelUsesBuiltInCatalog(t *testing.T) {
 // surface: it emits one text block through NewStreamWriter and finishes.
 type echoAdapter struct{}
 
+type echoStreamOptions struct {
+	Text string
+}
+
+func (*echoStreamOptions) Protocol() llm.Protocol { return "echo" }
+
+func (options *echoStreamOptions) Validate(_ []llm.ToolDefinition) error {
+	if options.Text == "" {
+		return errors.New("echo text is empty")
+	}
+	return nil
+}
+
 func (echoAdapter) Protocol() llm.Protocol { return "echo" }
 
 func (echoAdapter) Stream(
-	ctx context.Context, model llm.Model, _ llm.Context, _ llm.StreamOptions,
+	ctx context.Context, model llm.Model, _ llm.Context, options llm.StreamOptions,
 ) (<-chan llm.Event, error) {
+	echoOptions, _ := options.ProtocolOptions.(*echoStreamOptions)
 	events := make(chan llm.Event)
 	go func() {
 		defer close(events)
@@ -99,9 +114,9 @@ func (echoAdapter) Stream(
 		text := &llm.TextContent{}
 		message.Content = append(message.Content, text)
 		writer.Emit(llm.Event{Type: llm.EventTextStart, ContentIndex: 0})
-		text.Text = "echo"
-		writer.Emit(llm.Event{Type: llm.EventTextDelta, ContentIndex: 0, Delta: "echo"})
-		writer.Emit(llm.Event{Type: llm.EventTextEnd, ContentIndex: 0, Content: "echo"})
+		text.Text = echoOptions.Text
+		writer.Emit(llm.Event{Type: llm.EventTextDelta, ContentIndex: 0, Delta: echoOptions.Text})
+		writer.Emit(llm.Event{Type: llm.EventTextEnd, ContentIndex: 0, Content: echoOptions.Text})
 		message.StopReason = llm.StopReasonStop
 		writer.Done()
 	}()
@@ -122,7 +137,7 @@ func TestCustomProtocolAdapterViaRegistry(t *testing.T) {
 		ID: "echo-1", Provider: "echo", Protocol: "echo",
 	}, llm.Context{Messages: []llm.Message{
 		&llm.UserMessage{Content: []llm.UserContent{&llm.TextContent{Text: "hi"}}},
-	}}, llm.StreamOptions{})
+	}}, llm.StreamOptions{ProtocolOptions: &echoStreamOptions{Text: "echo"}})
 	if err != nil {
 		t.Fatalf("Complete() error = %v", err)
 	}

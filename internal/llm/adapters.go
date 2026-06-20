@@ -14,11 +14,11 @@ import (
 type ProviderEnv map[string]string
 
 // ProtocolStreamOptions is the extension point for settings whose semantics
-// cannot be shared across protocols. Implementations are supplied by this
-// package; the unexported validate method keeps the set closed and type-safe.
+// cannot be shared across protocols. Custom protocol adapters may provide their
+// own implementation and validate it before the stream starts.
 type ProtocolStreamOptions interface {
 	Protocol() Protocol
-	validate(tools []ToolDefinition) error
+	Validate(tools []ToolDefinition) error
 }
 
 // AnthropicToolChoice is the native Anthropic tool_choice union. Use one of the
@@ -61,7 +61,8 @@ func (*AnthropicStreamOptions) Protocol() Protocol {
 	return ProtocolAnthropicMessages
 }
 
-func (options *AnthropicStreamOptions) validate(tools []ToolDefinition) error {
+// Validate checks the Anthropic-specific settings against the available tools.
+func (options *AnthropicStreamOptions) Validate(tools []ToolDefinition) error {
 	if options == nil {
 		return errors.New("Anthropic stream options are nil")
 	}
@@ -108,7 +109,8 @@ func (*OpenAICompletionsStreamOptions) Protocol() Protocol {
 	return ProtocolOpenAICompletions
 }
 
-func (options *OpenAICompletionsStreamOptions) validate(tools []ToolDefinition) error {
+// Validate checks the OpenAI-specific settings against the available tools.
+func (options *OpenAICompletionsStreamOptions) Validate(tools []ToolDefinition) error {
 	if options == nil {
 		return errors.New("OpenAI Completions stream options are nil")
 	}
@@ -163,7 +165,7 @@ func (options StreamOptions) Validate(protocol Protocol, tools []ToolDefinition)
 			protocol,
 		)
 	}
-	return options.ProtocolOptions.validate(tools)
+	return options.ProtocolOptions.Validate(tools)
 }
 
 func validateAnthropicToolChoice(choice AnthropicToolChoice, tools []ToolDefinition) error {
