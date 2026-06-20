@@ -1,0 +1,108 @@
+# Custom protocols
+
+The built-in adapters cover OpenAI-compatible and Anthropic-compatible
+endpoints. To support a different wire protocol, implement `ProtocolAdapter`
+and register it on a client.
+
+An adapter implements two methods: `Protocol` returns its registry key, and
+`Stream` translates the provider response into package events. `StreamWriter`
+provides the same lifecycle machinery used by the built-in adapters: one
+`EventStart`, a `Partial` snapshot on non-terminal events, exactly one terminal
+event, and cancellation reported as `StopReasonAborted`.
+
+```go
+type myAdapter struct{ http *http.Client }
+
+func (myAdapter) Protocol() llm.Protocol { return "my-protocol" }
+
+func (a myAdapter) Stream(
+	ctx context.Context,
+	model llm.Model,
+	input llm.Context,
+	options llm.StreamOptions,
+) (<-chan llm.Event, error) {
+	events := make(chan llm.Event)
+	go func() {
+		defer close(events)
+
+		message := llm.AssistantMessage{
+			Protocol: model.Protocol,
+			Provider: model.Provider,
+			Model:    model.ID,
+		}
+		writer := llm.NewStreamWriter(ctx, events, &message)
+
+		reply, usage, err := callMyEndpoint(ctx, a.http, model, input, options)
+		if err != nil {
+			writer.Fail(err)
+			return
+		}
+
+		text := &llm.TextContent{}
+		message.Content = append(message.Content, text)
+		writer.Emit(llm.Event{Type: llm.EventTextStart, ContentIndex: 0})
+		for chunk := range reply {
+			text.Text += chunk
+			writer.Emit(llm.Event{
+				Type: llm.EventTextDelta, ContentIndex: 0, Delta: chunk,
+			})
+		}
+		writer.Emit(llm.Event{
+			Type: llm.EventTextEnd, ContentIndex: 0, Content: text.Text,
+		})
+
+		message.Usage = usage
+		message.StopReason = llm.StopReasonStop
+		writer.Done()
+	}()
+	return events, nil
+}
+```
+
+Register it alongside the built-in protocols:
+
+```go
+registry := llm.NewRegistry()
+llm.RegisterBuiltins(registry)
+if err := registry.Register(myAdapter{http: http.DefaultClient}); err != nil {
+	log.Fatal(err)
+}
+client := llm.NewClientWithRegistry(registry)
+
+model := llm.Model{
+	ID: "x", Provider: "me", Protocol: "my-protocol", MaxTokens: 1024,
+}
+message, err := client.Complete(ctx, model, input, llm.StreamOptions{})
+```
+
+The adapter owns translation in both directions: building the wire request,
+framing the response, updating usage and stop reason, and emitting deltas.
+`CloneToolCall` deep-copies tool calls for events. `ParseToolArgumentsMode`
+provides the same incomplete-JSON recovery used by the built-in adapters.
+
+## Custom protocol options
+
+Settings with protocol-specific semantics can use the shared extension point
+without changing `StreamOptions`:
+
+```go
+type myProtocolOptions struct {
+	SafetyMode string
+}
+
+func (*myProtocolOptions) Protocol() llm.Protocol { return "my-protocol" }
+
+func (options *myProtocolOptions) Validate(_ []llm.ToolDefinition) error {
+	if options.SafetyMode == "" {
+		return errors.New("safety mode is required")
+	}
+	return nil
+}
+
+options := llm.StreamOptions{
+	ProtocolOptions: &myProtocolOptions{SafetyMode: "strict"},
+}
+```
+
+`Client.Stream` verifies that `ProtocolOptions.Protocol()` matches the target
+model, then calls `Validate` before invoking the adapter.
