@@ -17,6 +17,7 @@ type (
 	Protocol                       = core.Protocol
 	ModelInput                     = core.ModelInput
 	ModelThinkingLevel             = core.ModelThinkingLevel
+	ThinkingDisplay                = core.ThinkingDisplay
 	UserContent                    = core.UserContent
 	AssistantContent               = core.AssistantContent
 	TextContent                    = core.TextContent
@@ -55,6 +56,9 @@ const (
 	ModelThinkingMedium  = core.ModelThinkingMedium
 	ModelThinkingHigh    = core.ModelThinkingHigh
 	ModelThinkingXHigh   = core.ModelThinkingXHigh
+
+	ThinkingDisplaySummarized = core.ThinkingDisplaySummarized
+	ThinkingDisplayOmitted    = core.ThinkingDisplayOmitted
 
 	StopReasonStop    = core.StopReasonStop
 	StopReasonLength  = core.StopReasonLength

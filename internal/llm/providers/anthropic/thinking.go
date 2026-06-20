@@ -25,8 +25,9 @@ func thinkingActive(model llm.Model, reasoning llm.ModelThinkingLevel) bool {
 // applyThinking sets the reasoning request fields. Adaptive models receive
 // thinking: adaptive plus an effort level; other reasoning models receive
 // budget-based thinking. "off" disables thinking; an empty level is left to the
-// model's own default.
-func applyThinking(params *sdk.MessageNewParams, model llm.Model, compat compat, reasoning llm.ModelThinkingLevel) {
+// model's own default. display controls how thinking is returned and applies to
+// both the adaptive and budget-based forms.
+func applyThinking(params *sdk.MessageNewParams, model llm.Model, compat compat, reasoning llm.ModelThinkingLevel, display llm.ThinkingDisplay) {
 	if !model.Reasoning || reasoning == "" {
 		return
 	}
@@ -38,7 +39,7 @@ func applyThinking(params *sdk.MessageNewParams, model llm.Model, compat compat,
 	if compat.forceAdaptiveThinking {
 		params.Thinking = sdk.ThinkingConfigParamUnion{
 			OfAdaptive: &sdk.ThinkingConfigAdaptiveParam{
-				Display: sdk.ThinkingConfigAdaptiveDisplaySummarized,
+				Display: adaptiveDisplay(display),
 			},
 		}
 		if effort := mapEffort(model, reasoning); effort != "" {
@@ -48,8 +49,29 @@ func applyThinking(params *sdk.MessageNewParams, model llm.Model, compat compat,
 	}
 
 	params.Thinking = sdk.ThinkingConfigParamUnion{
-		OfEnabled: &sdk.ThinkingConfigEnabledParam{BudgetTokens: thinkingBudget(reasoning, params.MaxTokens)},
+		OfEnabled: &sdk.ThinkingConfigEnabledParam{
+			BudgetTokens: thinkingBudget(reasoning, params.MaxTokens),
+			Display:      enabledDisplay(display),
+		},
 	}
+}
+
+// adaptiveDisplay maps the provider-independent display to the adaptive-thinking
+// enum, defaulting to summarized so behavior matches the API default.
+func adaptiveDisplay(display llm.ThinkingDisplay) sdk.ThinkingConfigAdaptiveDisplay {
+	if display == llm.ThinkingDisplayOmitted {
+		return sdk.ThinkingConfigAdaptiveDisplayOmitted
+	}
+	return sdk.ThinkingConfigAdaptiveDisplaySummarized
+}
+
+// enabledDisplay maps the provider-independent display to the budget-thinking
+// enum, defaulting to summarized so behavior matches the API default.
+func enabledDisplay(display llm.ThinkingDisplay) sdk.ThinkingConfigEnabledDisplay {
+	if display == llm.ThinkingDisplayOmitted {
+		return sdk.ThinkingConfigEnabledDisplayOmitted
+	}
+	return sdk.ThinkingConfigEnabledDisplaySummarized
 }
 
 // mapEffort maps a thinking level to an Anthropic effort, honoring an explicit

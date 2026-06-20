@@ -25,6 +25,10 @@ type StreamOptions struct {
 	// Reasoning requests a thinking level. The provider clamps it to what the
 	// model supports. Empty leaves the model's default; "off" disables thinking.
 	Reasoning ModelThinkingLevel
+	// ThinkingDisplay controls how an Anthropic reasoning model returns its
+	// thinking. Empty defaults to summarized. It has no effect when reasoning is
+	// off or on non-Anthropic protocols.
+	ThinkingDisplay ThinkingDisplay
 	// MaxRetries overrides the SDK client-side retry count for transient failures
 	// (HTTP 429 and 5xx, connection errors). Nil leaves the SDK default; a value
 	// of 0 disables retries so the caller can manage them.

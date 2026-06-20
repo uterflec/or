@@ -85,7 +85,7 @@ func (a *Adapter) Stream(
 	if len(tools) > 0 {
 		params.Tools = tools
 	}
-	applyThinking(&params, model, compat, options.Reasoning)
+	applyThinking(&params, model, compat, options.Reasoning, options.ThinkingDisplay)
 	// Temperature is incompatible with thinking and rejected by some models.
 	if options.Temperature != nil && compat.supportsTemperature && !thinkingActive(model, options.Reasoning) {
 		params.Temperature = sdk.Float(*options.Temperature)

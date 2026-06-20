@@ -34,6 +34,21 @@ const (
 	ModelThinkingXHigh   ModelThinkingLevel = "xhigh"
 )
 
+// ThinkingDisplay controls how a reasoning model returns its thinking. It does
+// not change whether the model reasons or what it is billed; it only governs
+// what travels back. Only Anthropic-protocol models honor it today.
+type ThinkingDisplay string
+
+const (
+	// ThinkingDisplaySummarized returns summarized thinking text in the response.
+	ThinkingDisplaySummarized ThinkingDisplay = "summarized"
+	// ThinkingDisplayOmitted redacts the thinking text but still returns the
+	// signature needed for multi-turn tool-use continuity. Use it for backends
+	// that never surface reasoning, trading the thinking text for lower
+	// time-to-first-token and a lighter response.
+	ThinkingDisplayOmitted ThinkingDisplay = "omitted"
+)
+
 // UserContent is content that can appear in a user message.
 type UserContent interface {
 	isUserContent()
