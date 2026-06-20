@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"sync"
 	"time"
@@ -12,7 +13,42 @@ import (
 // take precedence over process environment variables during credential lookup.
 type ProviderEnv map[string]string
 
-// StreamOptions contains provider-specific settings for a stream request.
+// ProtocolStreamOptions is the extension point for settings whose semantics
+// cannot be shared across protocols. Implementations are supplied by this
+// package; the unexported validate method keeps the set closed and type-safe.
+type ProtocolStreamOptions interface {
+	Protocol() Protocol
+	validate() error
+}
+
+// AnthropicStreamOptions contains settings understood only by the Anthropic
+// Messages protocol. Keeping them nested prevents provider-specific knobs from
+// flattening the shared StreamOptions namespace.
+type AnthropicStreamOptions struct {
+	// ThinkingDisplay controls how a reasoning model returns its thinking. Empty
+	// defaults to summarized.
+	ThinkingDisplay ThinkingDisplay
+}
+
+// Protocol identifies the protocol that accepts these options.
+func (*AnthropicStreamOptions) Protocol() Protocol {
+	return ProtocolAnthropicMessages
+}
+
+func (options *AnthropicStreamOptions) validate() error {
+	if options == nil {
+		return errors.New("Anthropic stream options are nil")
+	}
+	switch options.ThinkingDisplay {
+	case "", ThinkingDisplaySummarized, ThinkingDisplayOmitted:
+		return nil
+	default:
+		return fmt.Errorf("unsupported Anthropic thinking display %q", options.ThinkingDisplay)
+	}
+}
+
+// StreamOptions contains shared request settings plus optional protocol-specific
+// extensions. A non-nil extension must match the target model protocol.
 type StreamOptions struct {
 	APIKey string
 	Env    ProviderEnv
@@ -25,10 +61,8 @@ type StreamOptions struct {
 	// Reasoning requests a thinking level. The provider clamps it to what the
 	// model supports. Empty leaves the model's default; "off" disables thinking.
 	Reasoning ModelThinkingLevel
-	// ThinkingDisplay controls how an Anthropic reasoning model returns its
-	// thinking. Empty defaults to summarized. It has no effect when reasoning is
-	// off or on non-Anthropic protocols.
-	ThinkingDisplay ThinkingDisplay
+	// ProtocolOptions carries settings specific to exactly one protocol.
+	ProtocolOptions ProtocolStreamOptions
 	// MaxRetries overrides the SDK client-side retry count for transient failures
 	// (HTTP 429 and 5xx, connection errors). Nil leaves the SDK default; a value
 	// of 0 disables retries so the caller can manage them.
@@ -46,6 +80,25 @@ type StreamOptions struct {
 	// the provider. It fires once per attempt, so a retried request invokes it
 	// for each try, making retries observable.
 	OnRequest func(method, url string, body []byte)
+}
+
+// Validate checks that explicitly supplied protocol extensions match the target
+// protocol and contain supported values.
+func (options StreamOptions) Validate(protocol Protocol) error {
+	if options.ProtocolOptions == nil {
+		return nil
+	}
+	if err := options.ProtocolOptions.validate(); err != nil {
+		return err
+	}
+	if optionProtocol := options.ProtocolOptions.Protocol(); optionProtocol != protocol {
+		return fmt.Errorf(
+			"stream options for protocol %q are unsupported by protocol %q",
+			optionProtocol,
+			protocol,
+		)
+	}
+	return nil
 }
 
 // ProtocolAdapter translates between a concrete LLM protocol and the package streaming interface.

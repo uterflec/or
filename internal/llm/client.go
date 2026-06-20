@@ -24,6 +24,9 @@ func (c *Client) Stream(ctx context.Context, model Model, input Context, options
 	if c.registry == nil {
 		return nil, errors.New("provider registry is nil")
 	}
+	if err := options.Validate(model.Protocol); err != nil {
+		return nil, err
+	}
 
 	adapter, ok := c.registry.Get(model.Protocol)
 	if !ok {

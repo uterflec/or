@@ -45,7 +45,7 @@ func captureThinkingRequest(t *testing.T, adaptive bool, display llm.ThinkingDis
 	stream, err := NewAdapter(nil).Stream(context.Background(), model, anthropicTestContext(), llm.StreamOptions{
 		APIKey:          "test",
 		Reasoning:       llm.ModelThinkingHigh,
-		ThinkingDisplay: display,
+		ProtocolOptions: &llm.AnthropicStreamOptions{ThinkingDisplay: display},
 	})
 	if err != nil {
 		t.Fatalf("Stream() error = %v", err)

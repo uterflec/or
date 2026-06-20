@@ -36,6 +36,8 @@ type (
 	UsageCost                      = core.UsageCost
 	StopReason                     = core.StopReason
 	ProviderEnv                    = core.ProviderEnv
+	ProtocolStreamOptions          = core.ProtocolStreamOptions
+	AnthropicStreamOptions         = core.AnthropicStreamOptions
 	StreamOptions                  = core.StreamOptions
 	Client                         = core.Client
 	EventType                      = core.EventType

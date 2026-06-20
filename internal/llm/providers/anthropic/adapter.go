@@ -85,7 +85,11 @@ func (a *Adapter) Stream(
 	if len(tools) > 0 {
 		params.Tools = tools
 	}
-	applyThinking(&params, model, compat, options.Reasoning, options.ThinkingDisplay)
+	display := llm.ThinkingDisplay("")
+	if anthropicOptions, ok := options.ProtocolOptions.(*llm.AnthropicStreamOptions); ok && anthropicOptions != nil {
+		display = anthropicOptions.ThinkingDisplay
+	}
+	applyThinking(&params, model, compat, options.Reasoning, display)
 	// Temperature is incompatible with thinking and rejected by some models.
 	if options.Temperature != nil && compat.supportsTemperature && !thinkingActive(model, options.Reasoning) {
 		params.Temperature = sdk.Float(*options.Temperature)

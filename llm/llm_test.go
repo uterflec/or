@@ -43,6 +43,21 @@ func TestDefaultClientRejectsUnknownProtocol(t *testing.T) {
 	}
 }
 
+func TestDefaultClientRejectsMismatchedProtocolOptions(t *testing.T) {
+	_, err := llm.Stream(context.Background(), llm.Model{
+		ID:       "test-model",
+		Protocol: llm.ProtocolOpenAICompletions,
+		Provider: "facade-test",
+	}, llm.Context{}, llm.StreamOptions{
+		ProtocolOptions: &llm.AnthropicStreamOptions{
+			ThinkingDisplay: llm.ThinkingDisplayOmitted,
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), string(llm.ProtocolAnthropicMessages)) {
+		t.Fatalf("Stream() error = %v, want protocol options mismatch", err)
+	}
+}
+
 func TestGetModelUsesBuiltInCatalog(t *testing.T) {
 	model := llm.GetModel("deepseek", "deepseek-chat")
 	if model.Provider != "deepseek" || model.Protocol != llm.ProtocolOpenAICompletions {
