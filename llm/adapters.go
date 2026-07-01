@@ -252,21 +252,21 @@ type ProtocolAdapter interface {
 	Stream(ctx context.Context, model Model, input Context, options StreamOptions) (<-chan Event, error)
 }
 
-// Registry stores protocol adapters and is safe for concurrent access.
-type Registry struct {
+// AdapterRegistry stores protocol adapters and is safe for concurrent access.
+type AdapterRegistry struct {
 	mu       sync.RWMutex
 	adapters map[Protocol]ProtocolAdapter
 }
 
-// NewRegistry creates an empty provider registry.
-func NewRegistry() *Registry {
-	return &Registry{
+// NewAdapterRegistry creates an empty protocol adapter registry.
+func NewAdapterRegistry() *AdapterRegistry {
+	return &AdapterRegistry{
 		adapters: make(map[Protocol]ProtocolAdapter),
 	}
 }
 
 // Register adds or replaces an adapter for its protocol.
-func (registry *Registry) Register(adapter ProtocolAdapter) error {
+func (registry *AdapterRegistry) Register(adapter ProtocolAdapter) error {
 	if adapter == nil {
 		return errors.New("protocol adapter is nil")
 	}
@@ -284,7 +284,7 @@ func (registry *Registry) Register(adapter ProtocolAdapter) error {
 }
 
 // Get returns the adapter registered for the protocol.
-func (registry *Registry) Get(protocol Protocol) (ProtocolAdapter, bool) {
+func (registry *AdapterRegistry) Get(protocol Protocol) (ProtocolAdapter, bool) {
 	registry.mu.RLock()
 	defer registry.mu.RUnlock()
 

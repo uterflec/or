@@ -56,6 +56,13 @@ type ModelCost struct {
 	CacheWrite float64 `json:"cacheWrite"`
 }
 
+// ModelCompatibility is implemented by protocol-specific compatibility
+// configurations. It keeps Model independent from any one provider protocol
+// while allowing registration and adapters to verify type/protocol agreement.
+type ModelCompatibility interface {
+	Protocol() Protocol
+}
+
 // OpenAICompletionsCompatibility describes differences between providers that
 // implement an OpenAI-compatible Chat Completions endpoint. Pointer booleans
 // distinguish an explicit false value from an unspecified provider default.
@@ -97,13 +104,6 @@ type AnthropicMessagesCompatibility struct {
 // compatibility configuration describes.
 func (*AnthropicMessagesCompatibility) Protocol() Protocol {
 	return ProtocolAnthropicMessages
-}
-
-// ModelCompatibility is implemented by protocol-specific compatibility
-// configurations. It keeps Model independent from any one provider protocol
-// while allowing registration and adapters to verify type/protocol agreement.
-type ModelCompatibility interface {
-	Protocol() Protocol
 }
 
 // Model identifies a model, its provider endpoint, capabilities, limits, and
@@ -155,6 +155,7 @@ func (model *Model) UnmarshalJSON(data []byte) error {
 	}{modelAlias: (*modelAlias)(model)}
 
 	*model = Model{}
+
 	if err := json.Unmarshal(data, &wire); err != nil {
 		return fmt.Errorf("decode model: %w", err)
 	}

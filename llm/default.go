@@ -16,9 +16,9 @@ import "context"
 //
 // Import github.com/ktsoator/or/llm/all to register every built-in protocol at
 // once. A caller that prefers explicit wiring can skip the default registry and
-// build its own with NewRegistry, Registry.Register, and NewClient.
+// build its own with NewAdapterRegistry, AdapterRegistry.Register, and NewClient.
 var (
-	defaultRegistry = NewRegistry()
+	defaultRegistry = NewAdapterRegistry()
 	defaultClient   = NewClient(defaultRegistry)
 )
 

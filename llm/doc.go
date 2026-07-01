@@ -28,7 +28,7 @@
 //	msg, err := llm.Complete(ctx, model, llm.Prompt("hello"), llm.StreamOptions{})
 //
 // A caller that prefers explicit wiring can build its own registry and client
-// with NewRegistry, Registry.Register, and NewClient instead of the default.
+// with NewAdapterRegistry, AdapterRegistry.Register, and NewClient instead of the default.
 //
 // # Building a request
 //
@@ -111,6 +111,6 @@
 //
 // A genuinely different wire protocol is added by implementing [ProtocolAdapter]
 // and registering it — with Register for the package default registry, or with
-// Registry.Register on a registry passed to NewClient. NewStreamWriter gives the
+// AdapterRegistry.Register on a registry passed to NewClient. NewStreamWriter gives the
 // adapter the same event-stream machinery the built-ins use.
 package llm

@@ -135,7 +135,7 @@ func (a myAdapter) Stream(
 Register it and build a client:
 
 ```go
-registry := llm.NewRegistry()
+registry := llm.NewAdapterRegistry()
 if err := registry.Register(myAdapter{http: http.DefaultClient}); err != nil {
 	log.Fatal(err)
 }

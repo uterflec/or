@@ -14,6 +14,13 @@ import (
 //go:embed catalog.generated.json
 var generatedCatalogJSON []byte
 
+// Startup path:
+//
+//	builtInModelRegistry = newBuiltInModelRegistry()
+//	-> builtInModels()
+//	-> json.Unmarshal(generatedCatalogJSON, &models)
+//	-> each catalog entry is decoded as Model, so Model.UnmarshalJSON runs
+//	-> newBuiltInModelRegistry registers the decoded models
 var builtInModelRegistry = newBuiltInModelRegistry()
 
 func newBuiltInModelRegistry() *ModelRegistry {
@@ -26,10 +33,10 @@ func newBuiltInModelRegistry() *ModelRegistry {
 	return registry
 }
 
-func builtInModels() []Model {
-	var models []Model
-	if err := json.Unmarshal(generatedCatalogJSON, &models); err != nil {
+func builtInModels() (models []Model) {
+	err := json.Unmarshal(generatedCatalogJSON, &models)
+	if err != nil {
 		panic(fmt.Errorf("decode embedded model catalog: %w", err))
 	}
-	return models
+	return
 }

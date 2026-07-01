@@ -30,9 +30,9 @@ func newFakeAdapter(protocol Protocol, fn func(StreamOptions) (<-chan Event, err
 	}
 }
 
-func registryWith(t *testing.T, adapters ...ProtocolAdapter) *Registry {
+func registryWith(t *testing.T, adapters ...ProtocolAdapter) *AdapterRegistry {
 	t.Helper()
-	reg := NewRegistry()
+	reg := NewAdapterRegistry()
 	for _, a := range adapters {
 		if err := reg.Register(a); err != nil {
 			t.Fatalf("Register: %v", err)
@@ -42,7 +42,7 @@ func registryWith(t *testing.T, adapters ...ProtocolAdapter) *Registry {
 }
 
 func TestRegistryRegisterAndGet(t *testing.T) {
-	reg := NewRegistry()
+	reg := NewAdapterRegistry()
 	adapter := newFakeAdapter(ProtocolOpenAICompletions, nil)
 	if err := reg.Register(adapter); err != nil {
 		t.Fatalf("Register: %v", err)
@@ -54,7 +54,7 @@ func TestRegistryRegisterAndGet(t *testing.T) {
 }
 
 func TestRegistryRegisterRejectsNilAndEmptyProtocol(t *testing.T) {
-	reg := NewRegistry()
+	reg := NewAdapterRegistry()
 	if err := reg.Register(nil); err == nil || !strings.Contains(err.Error(), "nil") {
 		t.Fatalf("Register(nil) = %v, want nil error", err)
 	}
@@ -65,7 +65,7 @@ func TestRegistryRegisterRejectsNilAndEmptyProtocol(t *testing.T) {
 }
 
 func TestRegistryRegisterReplacesExisting(t *testing.T) {
-	reg := NewRegistry()
+	reg := NewAdapterRegistry()
 	first := newFakeAdapter(ProtocolOpenAICompletions, nil)
 	second := newFakeAdapter(ProtocolOpenAICompletions, nil)
 	_ = reg.Register(first)
@@ -77,7 +77,7 @@ func TestRegistryRegisterReplacesExisting(t *testing.T) {
 }
 
 func TestRegistryGetUnknownProtocol(t *testing.T) {
-	reg := NewRegistry()
+	reg := NewAdapterRegistry()
 	if got, ok := reg.Get(Protocol("nope")); ok || got != nil {
 		t.Fatalf("Get unknown = (%v, %v), want (nil, false)", got, ok)
 	}
@@ -92,7 +92,7 @@ func TestClientStreamReturnsErrorWhenRegistryIsNil(t *testing.T) {
 }
 
 func TestClientStreamReturnsErrorForUnknownProtocol(t *testing.T) {
-	client := NewClient(NewRegistry())
+	client := NewClient(NewAdapterRegistry())
 	_, err := client.Stream(context.Background(), Model{Protocol: Protocol("nope")}, Context{}, StreamOptions{})
 	if err == nil || !strings.Contains(err.Error(), "no adapter") {
 		t.Fatalf("Stream error = %v, want no-adapter error", err)

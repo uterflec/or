@@ -128,7 +128,7 @@ func (a myAdapter) Stream(
 注册它并构建 client：
 
 ```go
-registry := llm.NewRegistry()
+registry := llm.NewAdapterRegistry()
 if err := registry.Register(myAdapter{http: http.DefaultClient}); err != nil {
 	log.Fatal(err)
 }

@@ -9,11 +9,11 @@ import (
 
 // Client routes LLM requests to the adapter registered for a model protocol.
 type Client struct {
-	registry *Registry
+	registry *AdapterRegistry
 }
 
-// NewClient creates a client backed by the given provider registry.
-func NewClient(registry *Registry) *Client {
+// NewClient creates a client backed by the given adapter registry.
+func NewClient(registry *AdapterRegistry) *Client {
 	return &Client{
 		registry: registry,
 	}
@@ -22,7 +22,7 @@ func NewClient(registry *Registry) *Client {
 // Stream starts a streaming completion request for the given model and input.
 func (c *Client) Stream(ctx context.Context, model Model, input Context, options StreamOptions) (<-chan Event, error) {
 	if c.registry == nil {
-		return nil, errors.New("provider registry is nil")
+		return nil, errors.New("adapter registry is nil")
 	}
 	if err := options.Validate(model.Protocol, input.Tools); err != nil {
 		return nil, err

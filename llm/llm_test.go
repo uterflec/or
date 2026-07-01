@@ -128,7 +128,7 @@ func (echoAdapter) Stream(
 // A custom protocol adapter registered through the public registry serves
 // alongside the built-ins, and NewStreamWriter produces a well-formed stream.
 func TestCustomProtocolAdapterViaRegistry(t *testing.T) {
-	registry := llm.NewRegistry()
+	registry := llm.NewAdapterRegistry()
 	if err := registry.Register(openai.NewAdapter(nil)); err != nil {
 		t.Fatalf("Register(openai) error = %v", err)
 	}
