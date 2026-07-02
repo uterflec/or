@@ -15,10 +15,21 @@ func TestDefaultClientIncludesBuiltInAdapters(t *testing.T) {
 	tests := []struct {
 		name     string
 		protocol llm.Protocol
+		provider string
 		want     string
 	}{
-		{name: "openai", protocol: llm.ProtocolOpenAICompletions, want: "OpenAI API key is empty"},
-		{name: "anthropic", protocol: llm.ProtocolAnthropicMessages, want: "Anthropic API key is empty"},
+		{
+			name:     "openai",
+			protocol: llm.ProtocolOpenAICompletions,
+			provider: "deepseek",
+			want:     `API key is empty for provider "deepseek" (set DEEPSEEK_API_KEY or pass StreamOptions.APIKey)`,
+		},
+		{
+			name:     "anthropic",
+			protocol: llm.ProtocolAnthropicMessages,
+			provider: "anthropic",
+			want:     `API key is empty for provider "anthropic" (set ANTHROPIC_OAUTH_TOKEN or ANTHROPIC_API_KEY or pass StreamOptions.APIKey)`,
+		},
 	}
 
 	for _, test := range tests {
@@ -26,7 +37,7 @@ func TestDefaultClientIncludesBuiltInAdapters(t *testing.T) {
 			_, err := llm.Stream(context.Background(), llm.Model{
 				ID:       "test-model",
 				Protocol: test.protocol,
-				Provider: "facade-test",
+				Provider: test.provider,
 			}, llm.Context{}, llm.StreamOptions{})
 			if err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("Stream() error = %v, want %q", err, test.want)
@@ -73,7 +84,7 @@ func TestDefaultClientAcceptsPublicOpenAIToolChoice(t *testing.T) {
 			ToolChoice: llm.OpenAIToolChoiceRequired,
 		},
 	})
-	if err == nil || !strings.Contains(err.Error(), "OpenAI API key is empty") {
+	if err == nil || !strings.Contains(err.Error(), `API key is empty for provider "facade-test"`) {
 		t.Fatalf("Stream() error = %v, want validation to reach OpenAI adapter", err)
 	}
 }
@@ -160,7 +171,7 @@ func TestCustomProtocolAdapterViaRegistry(t *testing.T) {
 	if _, err := client.Stream(context.Background(), llm.Model{
 		ID: "m", Protocol: llm.ProtocolAnthropicMessages, Provider: "echo-test",
 	}, llm.Context{}, llm.StreamOptions{}); err == nil ||
-		!strings.Contains(err.Error(), "Anthropic API key is empty") {
+		!strings.Contains(err.Error(), `API key is empty for provider "echo-test"`) {
 		t.Fatalf("built-in adapter missing from custom registry: %v", err)
 	}
 }

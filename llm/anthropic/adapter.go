@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	sdk "github.com/anthropics/anthropic-sdk-go"
 	"github.com/anthropics/anthropic-sdk-go/option"
@@ -47,8 +48,8 @@ func (a *Adapter) Stream(
 	if model.ID == "" {
 		return nil, errors.New("model ID is empty")
 	}
-	if options.APIKey == "" {
-		return nil, errors.New("Anthropic API key is empty")
+	if strings.TrimSpace(options.APIKey) == "" {
+		return nil, llm.MissingAPIKeyError(model.Provider)
 	}
 
 	compat := resolveCompat(model)

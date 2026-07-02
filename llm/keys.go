@@ -1,6 +1,10 @@
 package llm
 
-import "os"
+import (
+	"fmt"
+	"os"
+	"strings"
+)
 
 var providerAPIKeyEnvVars = map[string][]string{
 	"github-copilot":         {"COPILOT_GITHUB_TOKEN"},
@@ -69,6 +73,26 @@ func GetEnvAPIKeyWithEnv(provider string, env ProviderEnv) string {
 		}
 	}
 	return ""
+}
+
+// MissingAPIKeyError returns an error that names the provider and the
+// environment variables checked for its API key.
+func MissingAPIKeyError(provider string) error {
+	provider = strings.TrimSpace(provider)
+	if provider == "" {
+		return fmt.Errorf("API key is empty (pass StreamOptions.APIKey)")
+	}
+
+	envVars := APIKeyEnvVars(provider)
+	if len(envVars) == 0 {
+		return fmt.Errorf("API key is empty for provider %q (pass StreamOptions.APIKey)", provider)
+	}
+
+	return fmt.Errorf(
+		"API key is empty for provider %q (set %s or pass StreamOptions.APIKey)",
+		provider,
+		strings.Join(envVars, " or "),
+	)
 }
 
 func findEnvAPIKeys(provider string, env ProviderEnv) []string {

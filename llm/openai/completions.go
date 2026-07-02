@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/ktsoator/or/llm"
 )
@@ -52,8 +53,8 @@ func (a *Adapter) Stream(
 			)
 		}
 	}
-	if options.APIKey == "" {
-		return nil, errors.New("OpenAI API key is empty")
+	if strings.TrimSpace(options.APIKey) == "" {
+		return nil, llm.MissingAPIKeyError(model.Provider)
 	}
 
 	compat := resolveCompat(model)
