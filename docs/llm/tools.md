@@ -1,5 +1,35 @@
 # Tools
 
+A tool is a function you declare and let the model *ask you to call* — to fetch
+data, run a calculation, or take an action the model cannot perform itself. The
+library never executes anything: it turns your Go type into a schema the model
+sees, hands back any calls the model makes, and lets you feed the results in. One
+round-trip looks like this: **the model emits a tool call → you decode and run it
+→ you send the result back → the model continues with that result in context.**
+For example, to answer a weather question the model does not look it up itself —
+it emits a `get_weather(city=…)` call, the caller runs it and sends the result
+back, and the model answers from that.
+
+This page covers the two halves of that flow: defining typed tools from Go
+structs, then running the request → execute → reply cycle as a loop.
+`DecodeToolCall` and `ToolResult` are the pieces that connect them.
+
+## At a glance
+
+| Task | API |
+|---|---|
+| Define a tool from a struct | `NewTool[T]` / `MustTool[T]` → `ToolDefinition` |
+| Attach tools to a request | `Context.Tools` |
+| Read the model's calls back | `AssistantMessage.ToolCalls()` → `[]ToolCall` |
+| Decode a call's arguments | `DecodeToolCall[T]` |
+| Return a result | `ToolResult(id, name, text)` → `ToolResultMessage` |
+| Validate without a Go type | `ValidateToolCall` / `ValidateToolArguments` / `ParseToolArguments` |
+| Force or restrict the choice | `StreamOptions.ProtocolOptions` |
+
+A `ToolDefinition` is just `Name`, `Description`, and a `Parameters` JSON Schema.
+A `ToolCall` the model returns carries an `ID`, a `Name`, and decoded
+`Arguments`; the `ID` and `Name` are what you echo back in the `ToolResult`.
+
 ## Typed tools
 
 Generate a provider-compatible JSON Schema from a Go struct instead of writing
@@ -18,6 +48,19 @@ type WeatherArgs struct {
 	Days  int    `json:"days" jsonschema:"minimum=1,maximum=10"`
 }
 ```
+
+The `jsonschema` tag understands the constraints the library validates against
+the model's returned arguments:
+
+| Constraint | Tag | Applies to |
+|---|---|---|
+| Required | omit `omitempty` (add it to make the field optional) | any |
+| Description | `description=...` | any |
+| Enum | `enum=celsius,enum=fahrenheit` | string, number |
+| Numeric range | `minimum=` · `maximum=` · `exclusiveMinimum=` · `exclusiveMaximum=` | number, integer |
+| String length | `minLength=` · `maxLength=` | string |
+| Pattern | `pattern=^[A-Z]` | string |
+| Array length | `minItems=` · `maxItems=` | array |
 
 **2. Build the tool from the type** and attach it to the request context.
 
@@ -175,6 +218,10 @@ flowchart TD
 - `StopReasonError` / `StopReasonAborted` — the request failed or was
   cancelled. Never execute tool calls from such a response.
 
+A request may declare several tools in `Context.Tools`, and one turn may contain
+more than one `ToolCall`. Iterate over `ToolCalls()` and route by `call.Name`;
+the inner loop below appends one `ToolResult` per call, in order.
+
 ```go
 for {
 	response, err := llm.Complete(ctx, model, llm.Context{
@@ -201,14 +248,17 @@ for {
 			messages = append(messages, result)
 			continue
 		}
+		// runWeather is your own code that does the work and returns result text.
 		messages = append(messages, llm.ToolResult(
 			toolCall.ID, toolCall.Name, runWeather(arguments)))
 	}
 }
 ```
 
-Bound the loop with a maximum round count so a misbehaving model cannot spin
-forever.
+Running the tool itself — `runWeather` in the example — is your application code;
+`llm` does not execute it. The library only hands back the model's calls and
+folds each `ToolResult` into the history, so there is no separate execution step
+to document.
 
 !!! check "Production tool-loop checklist"
     - **Gate on `StopReason`, not on the presence of tool calls.** Loop while it
@@ -277,3 +327,33 @@ options := llm.StreamOptions{
 
 Both protocols expose `Auto` and `None` constants. Any explicit tool choice
 requires at least one tool in `Context.Tools`.
+
+## Automating the loop
+
+The request → execute → reply loop above is what [`or/agent`](../agent/README.md)
+runs for you. Instead of hand-writing the `StopReason` gating, message
+bookkeeping, and dispatch, you give each tool an `Execute` function and call
+`Prompt` once — the tool's `llm.MustTool[T]` definition carries over verbatim:
+
+```go
+weather := agent.AgentTool{
+	Definition: llm.MustTool[WeatherArgs]("get_weather", "Get a weather forecast"),
+	Execute: func(ctx context.Context, callID string, args json.RawMessage,
+		onUpdate func(agent.ToolResult)) (agent.ToolResult, error) {
+		// decode args, do the work, return the result
+	},
+}
+
+assistant := agent.New(agent.Options{Model: model, Tools: []agent.AgentTool{weather}})
+err := assistant.Prompt(ctx, "What should I pack for Beijing?")
+```
+
+On top of the loop, the agent adds what an application needs around it:
+
+- **Streaming events** — `Subscribe` to text, reasoning, tool, and lifecycle events.
+- **Steering and follow-ups** — inject messages mid-run with `Steer` / `FollowUp`.
+- **Cancellation and state** — `Abort` a run; read a `Snapshot` of its state.
+- **Per-turn control** — swap the model, system prompt, or tools between turns.
+
+Reach for `agent` when you want these handled; stay with `llm` when you want full
+control of the loop itself. See the [agent guide](../agent/README.md) to start.
