@@ -136,16 +136,18 @@ func TestModelRegistryRegisterAndGet(t *testing.T) {
 
 func TestModelRegistryGetReturnsDeepCopy(t *testing.T) {
 	reg := NewModelRegistry()
-	if err := reg.Register(anthropicReasoningModel()); err != nil {
+	model := anthropicReasoningModel()
+	model.Headers = map[string]string{"X-Test": "1"}
+	if err := reg.Register(model); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
 	got, _ := reg.Get("demo", "demo-a")
-	got.Headers = map[string]string{"X": "mutated"}
+	got.Headers["X-Test"] = "mutated"
 	got.ThinkingLevelMap[ModelThinkingLow] = nil
 	got.Input[0] = Image
 
 	again, _ := reg.Get("demo", "demo-a")
-	if again.Headers != nil {
+	if again.Headers["X-Test"] != "1" {
 		t.Fatalf("Headers mutation leaked: %v", again.Headers)
 	}
 	if again.ThinkingLevelMap[ModelThinkingLow] == nil {
