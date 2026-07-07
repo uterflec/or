@@ -17,7 +17,7 @@ func NewTool[T any](name, description string) (ToolDefinition, error) {
 		return ToolDefinition{}, fmt.Errorf("tool name is empty")
 	}
 
-	typeOf := reflect.TypeOf((*T)(nil)).Elem()
+	typeOf := reflect.TypeFor[T]()
 	for typeOf.Kind() == reflect.Pointer {
 		typeOf = typeOf.Elem()
 	}
