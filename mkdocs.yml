@@ -7,6 +7,9 @@ copyright: Copyright &copy; ktsoator
 
 docs_dir: docs
 
+extra_css:
+  - assets/stylesheets/extra.css
+
 plugins:
   - search
   - i18n:
