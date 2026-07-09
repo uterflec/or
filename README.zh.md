@@ -1,13 +1,18 @@
-# or
+<div align="center">
+  <h1>or</h1>
+  <p><strong>从意图到行动，自由选择路径。</strong></p>
+  <p><a href="README.md">English</a> | 简体中文</p>
+  <p>
+    <a href="https://pkg.go.dev/github.com/ktsoator/or/llm"><img alt="Go Reference" src="https://pkg.go.dev/badge/github.com/ktsoator/or/llm.svg"></a>
+    <a href="https://github.com/ktsoator/or/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/ktsoator/or/actions/workflows/ci.yml/badge.svg"></a>
+    <a href="https://goreportcard.com/report/github.com/ktsoator/or"><img alt="Go Report Card" src="https://goreportcard.com/badge/github.com/ktsoator/or"></a>
+    <a href="https://github.com/ktsoator/or/releases/latest"><img alt="Release" src="https://img.shields.io/github/v/release/ktsoator/or"></a>
+    <a href="go.mod"><img alt="Go Version" src="https://img.shields.io/github/go-mod/go-version/ktsoator/or"></a>
+    <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-yellow.svg"></a>
+  </p>
+</div>
 
-[English](README.md) | 简体中文
-
-[![Go Reference](https://pkg.go.dev/badge/github.com/ktsoator/or/llm.svg)](https://pkg.go.dev/github.com/ktsoator/or/llm)
-[![CI](https://github.com/ktsoator/or/actions/workflows/ci.yml/badge.svg)](https://github.com/ktsoator/or/actions/workflows/ci.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/ktsoator/or)](https://goreportcard.com/report/github.com/ktsoator/or)
-[![Release](https://img.shields.io/github/v/release/ktsoator/or)](https://github.com/ktsoator/or/releases/latest)
-[![Go Version](https://img.shields.io/github/go-mod/go-version/ktsoator/or)](go.mod)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+## 关于
 
 `or` 是一个模块化的 Go 工具集,用于构建基于语言模型和上层 agent 的应用。它的
 LLM 包与具体提供方无关,在底层模型和通信协议不断更替的同时,让对话、工具、推理
