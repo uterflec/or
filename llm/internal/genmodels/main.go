@@ -130,6 +130,8 @@ var providerRules = []providerRule{
 	{Source: "groq", Provider: "groq", Protocol: "openai-completions", BaseURL: "https://api.groq.com/openai/v1"},
 	{Source: "cerebras", Provider: "cerebras", Protocol: "openai-completions", BaseURL: "https://api.cerebras.ai/v1"},
 	{Source: "xai", Provider: "xai", Protocol: "openai-completions", BaseURL: "https://api.x.ai/v1"},
+	{Source: "nvidia", Provider: "nvidia", Protocol: "openai-completions", BaseURL: "https://integrate.api.nvidia.com/v1"},
+	{Source: "togetherai", Provider: "together", Protocol: "openai-completions", BaseURL: "https://api.together.ai/v1"},
 	{Source: "huggingface", Provider: "huggingface", Protocol: "openai-completions", BaseURL: "https://router.huggingface.co/v1", Compat: openAICompat(withDeveloperRole(false))},
 	{Source: "fireworks-ai", Provider: "fireworks", Protocol: "anthropic-messages", BaseURL: "https://api.fireworks.ai/inference"},
 	{Source: "minimax", Provider: "minimax", Protocol: "anthropic-messages", BaseURL: "https://api.minimax.io/anthropic"},
@@ -143,6 +145,15 @@ var providerRules = []providerRule{
 	{Source: "zai-coding-plan", Provider: "zai", Protocol: "openai-completions", BaseURL: "https://api.z.ai/api/coding/paas/v4", Compat: zaiCompat()},
 	{Source: "zai-coding-plan", Provider: "zai-coding-cn", Protocol: "openai-completions", BaseURL: "https://open.bigmodel.cn/api/coding/paas/v4", Compat: zaiCompat()},
 	{Source: "kimi-for-coding", Provider: "kimi-coding", Protocol: "anthropic-messages", BaseURL: "https://api.kimi.com/coding", Headers: map[string]string{"User-Agent": "KimiCLI/1.5"}},
+
+	// Catalog-only providers: their models are listed for discovery and so the
+	// provider registry can report auth status, but no adapter implements their
+	// protocol yet. A request against them fails at Stream time with "no adapter
+	// registered for protocol …" until the protocol lands. Keep them free of any
+	// Compat, whose decode is only defined for the two implemented protocols.
+	{Source: "openai", Provider: "openai", Protocol: "openai-responses", BaseURL: "https://api.openai.com/v1"},
+	{Source: "google", Provider: "google", Protocol: "google-generative-ai", BaseURL: "https://generativelanguage.googleapis.com/v1beta"},
+	{Source: "mistral", Provider: "mistral", Protocol: "mistral-conversations", BaseURL: "https://api.mistral.ai"},
 }
 
 type compatOption func(*compatibility)
